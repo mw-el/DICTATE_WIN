@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+# Configuration files (may contain API keys)
+config.yml
+.env
+settings.json
+
+# User data
+transcripts/
+*.wav
+*.mp3
+
+# Logs
+*.log
+/tmp/dictate.log
+install-*.log
+
+# Backup files
+*.bak
+*.backup
+*_old.py
+*_backup.py
+dictate_without_hotkeys_*.py
+
+# Archive (historical docs, not for production)
+archive/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build/distribution
+build/
+dist/
+*.egg-info/

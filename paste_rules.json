@@ -1,0 +1,37 @@
+﻿{
+  "_comment": "Paste Rules Configuration for Dictate App (Windows)",
+  "_description": [
+    "This file defines which keyboard shortcut to use for pasting text in different applications.",
+    "",
+    "HOW IT WORKS:",
+    "- Rules are checked in order (top to bottom)",
+    "- First matching rule wins",
+    "- If no rule matches, 'default_paste_key' is used",
+    "",
+    "RULE MATCHING:",
+    "- 'window_class': List of Win32 window class names (case-insensitive).",
+    "- 'title_contains': (Optional) List of strings that must appear in window title (case-insensitive)",
+    "- 'title_not_contains': (Optional) List of strings that must NOT appear in window title",
+    "",
+    "PASTE KEYS:",
+    "- 'ctrl+v': Standard paste (works in most apps)",
+    "- 'ctrl+shift+v': Terminal paste (some apps)",
+    "- 'shift+insert': Alternative paste (some apps)",
+    "",
+    "ADDING NEW RULES:",
+    "1. Trigger a paste and check the Dictate console log for window class/title",
+    "2. Add a rule with the appropriate paste_key",
+    "3. More specific rules should come before general rules"
+  ],
+
+  "default_paste_key": "ctrl+v",
+
+  "app_rules": [
+    {
+      "window_class": ["chrome_widgetwin_1", "code", "code-oss", "vscodium"],
+      "title_contains": ["terminal", "powershell", "cmd", "wsl"],
+      "paste_key": "ctrl+shift+v",
+      "description": "Terminal-like contexts - requires Ctrl+Shift+V"
+    }
+  ]
+}

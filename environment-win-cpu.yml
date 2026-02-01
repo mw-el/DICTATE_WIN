@@ -1,0 +1,38 @@
+﻿name: fasterwhisper
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10.14
+  - pip
+  - setuptools
+  - wheel
+
+  # Audio processing (ffmpeg)
+  - pytorch::ffmpeg=4.3
+
+  # CPU-only PyTorch
+  - pytorch::pytorch=2.5.1
+  - pytorch::torchaudio=2.5.1
+  - pytorch::cpuonly
+
+  # Python packages via pip
+  - pip:
+      - av==16.0.1
+      - faster-whisper==1.2.0
+      - ctranslate2==4.6.0
+      - ttkbootstrap==1.14.7
+      - pyperclip==1.11.0
+      - pynput==1.8.1
+      - pystray
+      - pywin32
+      - requests
+      - pillow
+      - numpy==2.2.6
+      - pyyaml>=6.0
+      - coloredlogs==15.0.1
+
+variables:
+  TTKBOOTSTRAP_FONT_MANAGER: tk
