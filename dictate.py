@@ -76,6 +76,20 @@ def set_windows_app_id(app_id):
     except Exception:
         pass
 
+def enable_windows_dpi_awareness():
+    """Enable DPI awareness to avoid blurry rendering on Windows."""
+    try:
+        shcore = ctypes.windll.shcore
+        PROCESS_PER_MONITOR_DPI_AWARE = 2
+        shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)
+        return True
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+            return True
+        except Exception:
+            return False
+
 # Environment check - just warn, don't try to activate
 if 'CONDA_DEFAULT_ENV' not in os.environ:
     print("⚠️ Warning: CONDA_DEFAULT_ENV not set")
@@ -96,7 +110,14 @@ def detect_gpu_availability():
     if not HAS_TORCH:
         gpu_info['error'] = "PyTorch not available"
         gpu_info['details'].append("- Install PyTorch with CUDA support")
-        return gpu_info
+    return gpu_info
+
+def resolve_model_source(model_name):
+    """Prefer local models/ directory if present."""
+    local_dir = os.path.join(os.path.dirname(__file__), "models", model_name)
+    if os.path.isdir(local_dir):
+        return local_dir
+    return model_name
     
     try:
         # Check basic CUDA availability
@@ -153,16 +174,21 @@ if gpu_info['available']:
     current_model_name = "large-v3-turbo"
     use_gpu = True
 else:
-    # CPU-only system: use small model for reasonable performance
+    # CPU-only system: default to small model for reasonable performance
     current_model_name = "small"
     use_gpu = False
-    print("ℹ️  No GPU detected - defaulting to CPU with 'small' model")
+    print("ℹ️  No GPU detected - defaulting to CPU (default model: small)")
 
 # Load configuration
 config = load_config()
 
 # Override defaults with config values (ensure DE-CH is default)
 current_language = config.get("language", "DE-CH")
+cpu_quality_preset = str(config.get("cpu_quality_preset", "MED")).upper()
+if cpu_quality_preset not in ("HI", "MED", "LO"):
+    cpu_quality_preset = "MED"
+    config["cpu_quality_preset"] = cpu_quality_preset
+    save_config(config)
 
 # Make sure config has DE-CH as default if not set
 if "language" not in config:
@@ -171,9 +197,6 @@ if "language" not in config:
     save_config(config)
 current_model_name = config.get("model", current_model_name)  # Use config or GPU-detected default
 use_gpu = config.get("use_gpu", use_gpu)  # Use config or GPU-detected default
-if not use_gpu:
-    current_model_name = "small"
-    config["model"] = "small"
 
 # Models available in HuggingFace cache (~/.cache/huggingface/hub/)
 # Only efficient models: base (142M), small (464M), large-v3-turbo (1.6G)
@@ -189,6 +212,8 @@ audio_file_path = None
 ffmpeg_process = None
 ffmpeg_log_handle = None
 windows_audio_device = None
+model_load_lock = threading.Lock()
+model_loading = False
 
 # Hotkey system global variables
 hotkey_manager = None
@@ -238,7 +263,7 @@ def get_output_paths(transcript_text):
     output_dir = os.path.expanduser("~/Music/dictate")
     ensure_directory(output_dir)
     
-    audio_file_path = os.path.join(output_dir, f"{filename_base}.wav")
+    audio_file_path = os.path.join(output_dir, f"{filename_base}.mp3")
     transcript_file_path = os.path.join(output_dir, f"{filename_base}.txt")
     
     return audio_file_path, transcript_file_path
@@ -304,7 +329,8 @@ def _build_ffmpeg_command(audio_path):
         "-i", input_spec,
         "-ac", "1",
         "-ar", "16000",
-        "-c:a", "pcm_s16le",
+        "-c:a", "libmp3lame",
+        "-b:a", "192k",
         audio_path
     ]
 
@@ -403,13 +429,25 @@ def display_error_in_text_area(title, error_msg, details=None):
 
 # Model initialization - show errors instead of silent fallback
 def initialize_model():
-    global model, use_gpu
+    global model, use_gpu, model_loading
+
+    if model_loading:
+        print("ℹ️  Model load already in progress; skipping duplicate request")
+        return
+
+    if not model_load_lock.acquire(blocking=False):
+        print("ℹ️  Model load lock busy; skipping duplicate request")
+        return
+
+    model_loading = True
     
     if not HAS_WHISPER:
         error_msg = "faster_whisper module not found"
         display_error_in_text_area("WHISPER NOT AVAILABLE", error_msg, 
                                  ["Make sure you're in the 'fasterwhisper' conda environment"])
         action_status.config(text="ERROR: faster_whisper not available", anchor="center")
+        model_loading = False
+        model_load_lock.release()
         return
     
     print(f"=== STARTING MODEL LOAD: {current_model_name} ===")
@@ -425,6 +463,17 @@ def initialize_model():
     except:
         pass  # If app.update() fails, continue anyway
     
+    # Free previous model before loading a new one
+    if model is not None:
+        try:
+            del model
+            model = None
+            print("✅ Previous model freed")
+        except Exception:
+            pass
+
+    model_source = resolve_model_source(current_model_name)
+
     # Try GPU if requested
     if use_gpu:
         if not gpu_info['available']:
@@ -432,6 +481,8 @@ def initialize_model():
             display_error_in_text_area("GPU INITIALIZATION FAILED", 
                                      gpu_info['error'], gpu_info['details'])
             action_status.config(text="GPU ERROR - Check text area for details", anchor="center")
+            model_loading = False
+            model_load_lock.release()
             return
         
         try:
@@ -439,7 +490,7 @@ def initialize_model():
             compute_type = 'float16'
             print(f"Attempting GPU load: device={device}, compute_type={compute_type}")
             
-            model = WhisperModel(current_model_name, device=device, compute_type=compute_type)
+            model = WhisperModel(model_source, device=device, compute_type=compute_type)
             
             print("✅ GPU MODEL LOADED SUCCESSFULLY")
             model_abbrev = {"base": "BASE", "small": "SML", "large-v3-turbo": "V3T"}
@@ -448,12 +499,15 @@ def initialize_model():
             # Clear any previous errors
             if "🚨" in transcript_text.get("1.0", "1.10"):
                 transcript_text.delete("1.0", 'end')
+            model_loading = False
+            model_load_lock.release()
             return
             
         except Exception as e:
             # Show detailed GPU error
             error_details = [
                 f"Model: {current_model_name}",
+                f"Model source: {model_source}",
                 f"Device: {device}",
                 f"Compute type: {compute_type}",
                 f"Full error: {str(e)}",
@@ -463,16 +517,23 @@ def initialize_model():
             ]
             display_error_in_text_area("MODEL LOAD FAILED (GPU)", str(e), error_details)
             action_status.config(text="GPU MODEL LOAD FAILED - See text area", anchor="center")
+            model_loading = False
+            model_load_lock.release()
             return
     
     # CPU mode (only if explicitly requested via button)
     else:
         try:
             device = 'cpu'
-            compute_type = 'float32'
+            cpu_compute_map = {
+                "HI": "float32",
+                "MED": "int8_float32",
+                "LO": "int8"
+            }
+            compute_type = cpu_compute_map.get(cpu_quality_preset, "float32")
             print(f"Loading CPU model: device={device}, compute_type={compute_type}")
             
-            model = WhisperModel(current_model_name, device=device, compute_type=compute_type)
+            model = WhisperModel(model_source, device=device, compute_type=compute_type)
             
             print("✅ CPU MODEL LOADED SUCCESSFULLY")
             model_abbrev = {"base": "BASE", "small": "SML", "large-v3-turbo": "V3T"}
@@ -485,12 +546,16 @@ def initialize_model():
         except Exception as e:
             error_details = [
                 f"Model: {current_model_name}",
+                f"Model source: {model_source}",
                 f"Device: {device}",
                 f"Compute type: {compute_type}",
                 f"Full error: {str(e)}"
             ]
             display_error_in_text_area("MODEL LOAD FAILED (CPU)", str(e), error_details)
             action_status.config(text="CPU MODEL LOAD FAILED", anchor="center")
+        finally:
+            model_loading = False
+            model_load_lock.release()
 
 # Language toggle - now cycles through DE-DE, DE-CH, EN
 def toggle_language():
@@ -503,13 +568,6 @@ def toggle_language():
 
 def cycle_model():
     global current_model_name
-    if not use_gpu:
-        current_model_name = "small"
-        model_button.config(text="SML")
-        config["model"] = "small"
-        save_config(config)
-        update_status_labels()
-        return
     current_index = available_models.index(current_model_name) if current_model_name in available_models else 0
     next_index = (current_index + 1) % len(available_models)
     current_model_name = available_models[next_index]
@@ -535,12 +593,31 @@ def toggle_gpu():
 
     # MEMORY FIX: Use managed thread
     start_managed_thread(target=initialize_model, name="InitializeModel_GPU")
+    update_quality_button_state()
     update_status_labels()
 
 def update_status_labels():
     model_abbrev = {"base": "BASE", "small": "SML", "large-v3-turbo": "V3T"}
     abbrev = model_abbrev.get(current_model_name, current_model_name.upper()[:4])
     model_status.config(text=f"{abbrev} - {current_language}")
+
+def update_quality_button_state():
+    if use_gpu:
+        quality_button.config(state="disabled")
+    else:
+        quality_button.config(state="normal")
+    quality_button.config(text=cpu_quality_preset)
+
+def cycle_quality_preset():
+    global cpu_quality_preset
+    presets = ["HI", "MED", "LO"]
+    current_index = presets.index(cpu_quality_preset) if cpu_quality_preset in presets else 1
+    cpu_quality_preset = presets[(current_index + 1) % len(presets)]
+    config["cpu_quality_preset"] = cpu_quality_preset
+    save_config(config)
+    update_quality_button_state()
+    if not use_gpu:
+        start_managed_thread(target=initialize_model, name="InitializeModel_CPU_Quality")
 
 # Recording
 def toggle_recording():
@@ -615,10 +692,19 @@ def transcribe_audio(audio_file_path):
 
     try:
         # Transcribe with anti-hallucination parameter
+        if use_gpu:
+            beam_size = 5
+        else:
+            cpu_beam_map = {
+                "HI": 5,
+                "MED": 3,
+                "LO": 2
+            }
+            beam_size = cpu_beam_map.get(cpu_quality_preset, 5)
         segments, info = model.transcribe(
             audio_file_path,
             language=whisper_language,
-            beam_size=5,
+            beam_size=beam_size,
             condition_on_previous_text=False  # Critical: Prevents end-of-transcription hallucinations
         )
         # Convert to list and process, then explicitly free memory
@@ -845,14 +931,6 @@ def on_model_change_from_tray(model_name):
     """Called when user changes model from tray menu"""
     global current_model_name
 
-    if not use_gpu:
-        current_model_name = "small"
-        model_button.config(text="SML")
-        config["model"] = "small"
-        save_config(config)
-        print("???? CPU mode active - forcing model: small")
-        return
-
     current_model_name = model_name
 
     # Update GUI button if window is visible
@@ -877,10 +955,8 @@ def on_gpu_toggle_from_tray(use_gpu_enabled):
         gpu_button.config(text="GPU", bootstyle="success")
     else:
         gpu_button.config(text="CPU", bootstyle="secondary")
-        # Force smallest model on CPU for speed
-        current_model_name = "small"
-        model_button.config(text="SML")
-        config["model"] = "small"
+        model_abbrev = {"base": "BASE", "small": "SML", "large-v3-turbo": "V3T"}
+        model_button.config(text=model_abbrev.get(current_model_name, current_model_name.upper()[:4]))
 
     # Save to config
     config["use_gpu"] = use_gpu
@@ -888,6 +964,7 @@ def on_gpu_toggle_from_tray(use_gpu_enabled):
 
     # Reload model in background
     start_managed_thread(target=initialize_model, name="InitializeModel")
+    update_quality_button_state()
     print(f"???? Switched to: {'GPU' if use_gpu else 'CPU'} mode")
 
 # ================================
@@ -1010,6 +1087,11 @@ def detect_dpi_scaling():
         return 96, 1.0, {}
 
 # Detect DPI and set scaling factors
+if enable_windows_dpi_awareness():
+    print("✅ DPI awareness enabled")
+else:
+    print("⚠️ Could not enable DPI awareness")
+
 detected_dpi, auto_scale, _ = detect_dpi_scaling()
 font_scale = auto_scale
 widget_scale = auto_scale
@@ -1017,6 +1099,11 @@ print(f"? DPI detected: {detected_dpi} DPI (scale: {auto_scale:.2f}x)")
 
 set_windows_app_id("Dictate")
 app = tk.Tk(className='dictate')
+try:
+    app.tk.call("tk", "scaling", 1.0)
+    print("✅ Tk scaling set to 1.0 (manual DPI scaling)")
+except Exception as e:
+    print(f"⚠️ Could not set Tk scaling: {e}")
 
 # ================================
 # Font Configuration for Windows
@@ -1123,22 +1210,25 @@ def force_window_visible():
 app.force_window_visible = force_window_visible
 
 # Set application icon
-icon_png = os.path.join(os.path.dirname(__file__), "dictate_icon_128x128.png")
+icon_dir = os.path.join(os.path.dirname(__file__), "icon_variants")
 icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
-icon_path = icon_ico if os.path.exists(icon_ico) else icon_png
-if os.path.exists(icon_path):
-    try:
-        # Keep a reference to prevent garbage collection
-        app.icon = tk.PhotoImage(file=icon_png) if os.path.exists(icon_png) else None
-        if app.icon:
-            app.iconphoto(True, app.icon)
-        if os.path.exists(icon_ico):
-            app.iconbitmap(icon_ico)
-        print(f"✅ Application icon loaded: {icon_path}")
-    except Exception as e:
-        print(f"Warning: Could not load icon: {e}")
-else:
-    print(f"Warning: Icon file not found: {icon_path}")
+icons = []
+try:
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        icon_path = os.path.join(icon_dir, f"dictate_icon_{size}x{size}.png")
+        if os.path.exists(icon_path):
+            icons.append(tk.PhotoImage(file=icon_path))
+    if icons:
+        app.icons = icons  # keep references
+        app.iconphoto(True, *icons)
+    if os.path.exists(icon_ico):
+        app.iconbitmap(icon_ico)
+    if icons or os.path.exists(icon_ico):
+        print("✅ Application icon loaded")
+    else:
+        print("Warning: Icon files not found")
+except Exception as e:
+    print(f"Warning: Could not load icon: {e}")
 
 # NOTE: Font configuration already done BEFORE theme setup above
 # No additional font configuration needed here
@@ -1237,6 +1327,10 @@ model_button = tb.Button(button_frame, text=model_abbrev.get(current_model_name,
                          bootstyle="secondary", width=4, command=cycle_model)
 model_button.pack(side="left", padx=1)
 
+quality_button = tb.Button(button_frame, text=cpu_quality_preset, bootstyle="secondary", width=4,
+                          command=cycle_quality_preset)
+quality_button.pack(side="left", padx=1)
+
 # Status display (no bootstyle to avoid white background)
 action_status = tb.Label(app, text="APP READY", anchor="center")
 action_status.pack(pady=5, fill="x")
@@ -1287,6 +1381,8 @@ gpu_button = tb.Button(bottom_frame, text=initial_gpu_text,
                       command=toggle_gpu)
 gpu_button.pack(side="right", padx=1)
 
+update_quality_button_state()
+
 # Crash handler (keep your existing one)
 def show_crash_dialog(exc_type, exc_value, exc_traceback):
     error_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -1311,7 +1407,8 @@ sys.excepthook = show_crash_dialog
 # Start the Application
 print(f"🚀 Starting dictate.py with {current_model_name} + Swiss German...")
 print(f"🔧 GPU Mode: {'Enabled' if use_gpu else 'Disabled'}")
-print(f"🎯 GPU Status: {'✅ Available' if gpu_info['available'] else '❌ ' + gpu_info['error']}")
+gpu_error = gpu_info.get("error") or "Unknown error"
+print(f"🎯 GPU Status: {'✅ Available' if gpu_info['available'] else '❌ ' + gpu_error}")
 if not gpu_info['available']:
     print("💡 Will show detailed GPU error in text area - you can toggle to CPU if needed")
 

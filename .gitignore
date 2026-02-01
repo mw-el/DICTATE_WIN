@@ -32,6 +32,7 @@ settings.json
 transcripts/
 *.wav
 *.mp3
+models/
 
 # Logs
 *.log

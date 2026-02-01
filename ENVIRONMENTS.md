@@ -5,7 +5,7 @@ This project provides Windows-only environment configurations for GPU and CPU se
 ## Available Environment Files
 
 ### 1. `environment-win-gpu.yml` (Windows + CUDA)
-- For systems with NVIDIA GPU
+- For systems with **NVIDIA GPU**
 - Uses PyTorch with CUDA 12.1 support
 
 ### 2. `environment-win-cpu.yml` (Windows + CPU)
@@ -23,6 +23,19 @@ The `install.ps1` script automatically detects your system configuration:
 1. Checks for NVIDIA GPU using `nvidia-smi`
 2. Selects `environment-win-gpu.yml` or `environment-win-cpu.yml`
 
+You can also force a specific environment:
+
+```powershell
+.\install.ps1 -ForceGpu
+.\install.ps1 -ForceCpu
+```
+
+Optional: pre-download models into the repo for offline moves:
+
+```powershell
+.\download_models.ps1
+```
+
 ## Manual Installation
 
 ```powershell
@@ -38,3 +51,5 @@ conda env create -f environment-win-cpu.yml
 ```powershell
 nvidia-smi
 ```
+
+> Note: AMD/ROCm GPUs are not supported by the Windows CUDA pipeline used here.

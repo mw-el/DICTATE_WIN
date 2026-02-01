@@ -13,8 +13,9 @@
   ```
 
 ### 3) GPU not available
-- Run `nvidia-smi` to confirm the driver.
+- Run `nvidia-smi` to confirm the driver (NVIDIA only).
 - If GPU fails, switch to CPU mode in the tray menu.
+- AMD/ROCm GPUs are not supported by the Windows CUDA pipeline used here.
 
 ### 4) Auto-paste not working
 - Some apps block simulated input. Try another paste key rule in `paste_rules.json`.

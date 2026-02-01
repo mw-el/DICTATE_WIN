@@ -1,5 +1,11 @@
 $ErrorActionPreference = "Stop"
 
+param(
+    [switch]$ForceGpu,
+    [switch]$ForceCpu,
+    [switch]$DownloadModels
+)
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envName = "fasterwhisper"
 $minicondaDir = Join-Path $env:USERPROFILE "miniconda3"
@@ -35,16 +41,33 @@ $envFileCpu = Join-Path $scriptDir "environment-win-cpu.yml"
 $envFile = $envFileCpu
 
 $useGpu = $false
-try {
-    & nvidia-smi | Out-Null
-    if ($LASTEXITCODE -eq 0) { $useGpu = $true }
-} catch {
+if ($ForceGpu -and $ForceCpu) {
+    throw "Use only one of -ForceGpu or -ForceCpu."
+}
+
+if ($ForceGpu) {
+    $useGpu = $true
+    Write-Info "ForceGpu specified. Using GPU environment."
+    try {
+        & nvidia-smi | Out-Null
+    } catch {
+        Write-Info "⚠️  nvidia-smi not found. GPU will not work until NVIDIA drivers are installed."
+    }
+} elseif ($ForceCpu) {
     $useGpu = $false
+    Write-Info "ForceCpu specified. Using CPU environment."
+} else {
+    try {
+        & nvidia-smi | Out-Null
+        if ($LASTEXITCODE -eq 0) { $useGpu = $true }
+    } catch {
+        $useGpu = $false
+    }
 }
 
 if ($useGpu -and (Test-Path $envFileGpu)) {
     $envFile = $envFileGpu
-    Write-Info "GPU detected. Using environment-win-gpu.yml"
+    Write-Info "GPU environment selected. Using environment-win-gpu.yml"
 } else {
     Write-Info "GPU not detected (or not available). Using environment-win-cpu.yml"
 }
@@ -70,3 +93,17 @@ New-Item -ItemType Directory -Force -Path (Join-Path $musicBase "logs") | Out-Nu
 Write-Info ""
 Write-Info "Install complete."
 Write-Info "Run: .\\start_dictate.ps1"
+
+if ($DownloadModels) {
+    Write-Info ""
+    Write-Info "Downloading models to .\\models ..."
+    & (Join-Path $scriptDir "download_models.ps1")
+}
+
+Write-Info ""
+Write-Info "Creating Start Menu shortcut..."
+try {
+    & (Join-Path $scriptDir "create_shortcut.ps1")
+} catch {
+    Write-Info "⚠️  Shortcut creation failed. You can run .\\create_shortcut.ps1 manually."
+}
