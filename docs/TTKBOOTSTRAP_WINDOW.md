@@ -1,18 +1,14 @@
-# ttkbootstrap Window & Icon Integration
+# ttkbootstrap Window & Icon Integration (Windows)
 
-**For humans:** Fix for missing app icons in Linux dock/taskbar when using ttkbootstrap.
+**For humans:** Fix for missing app icons and taskbar grouping when using ttkbootstrap on Windows.
 
-**For AI:** Correct pattern for ttkbootstrap window creation with WM_CLASS support.
-
----
+**For AI:** Correct pattern for ttkbootstrap window creation with AppUserModelID support.
 
 ## PROBLEM
 
-**Using `tb.Window()` → generic icon in dock**
+**Using `tb.Window()` → no control over taskbar grouping or icon**
 
-**Cause:** `tb.Window()` doesn't support `className` parameter needed for WM_CLASS matching.
-
----
+**Cause:** `tb.Window()` doesn't support `className` parameter.
 
 ## SOLUTION
 
@@ -21,9 +17,13 @@
 ```python
 import tkinter as tk
 import ttkbootstrap as tb
+import ctypes
+
+# Set AppUserModelID for taskbar grouping BEFORE creating window
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Dictate")
 
 # CORRECT
-app = tk.Tk(className='app-name')  # Sets WM_CLASS
+app = tk.Tk(className='dictate')
 style = tb.Style(theme='sandstone')  # Apply theme
 
 # All ttkbootstrap widgets work normally
@@ -40,128 +40,63 @@ app = tb.Window(themename='sandstone')
 # No way to set className!
 ```
 
----
-
 ## WHY IT MATTERS
 
-**Desktop integration requires WM_CLASS match:**
+**Windows taskbar integration requires:**
 
-**.desktop file:**
-```desktop
-StartupWMClass=app-name
-```
+1. `SetCurrentProcessExplicitAppUserModelID("Dictate")` — groups windows in taskbar
+2. Start Menu shortcut with matching AppUserModelID — set via `create_shortcut.ps1`
+3. `.ico` file for taskbar/window icon
 
-**Python code:**
-```python
-app = tk.Tk(className='app-name')  # Must match
-```
+## START MENU SHORTCUT
 
-**Result:** Custom icon appears in dock.
+The `create_shortcut.ps1` script creates a shortcut with:
 
----
-
-## VERIFICATION
-
-**Check WM_CLASS:**
-```bash
-# Start app, then:
-xprop WM_CLASS  # Click on window
-# Should show: "app-name", "app-name"
-```
-
-**If wrong:** Rebuild with correct className parameter.
-
----
+- Target: `powershell.exe` calling `start_dictate.ps1`
+- Working directory: script folder
+- Icon: `dictate.ico`
+- AppUserModelID: "Dictate" (set via pywin32 propsys)
 
 ## COMPLETE PATTERN
 
 ```python
 import tkinter as tk
 import ttkbootstrap as tb
+import ctypes
+import os
 
-# Initialize with WM_CLASS
-app = tk.Tk(className='my-app')
+# Set AppUserModelID
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Dictate")
+
+# Initialize with className
+app = tk.Tk(className='dictate')
 
 # Apply ttkbootstrap theme
 style = tb.Style(theme='sandstone')
 
-# Set window properties
-app.title("My Application")
-app.geometry("800x600")
+# Set window icon
+icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
+if os.path.exists(icon_ico):
+    app.iconbitmap(icon_ico)
 
-# Optional: Set window icon
-icon_path = "/path/to/icon.png"
-icon = tk.PhotoImage(file=icon_path)
-app.iconphoto(True, icon)
-
-# Build UI with ttkbootstrap widgets
-frame = tb.Frame(app)
-frame.pack(fill='both', expand=True)
-
-button = tb.Button(frame, text="Click", bootstyle="success")
-button.pack(pady=20)
-
-label = tb.Label(frame, text="Hello", font=('Segoe UI', 12))
-label.pack()
+# Multi-size PNG icons for better rendering
+icon_dir = os.path.join(os.path.dirname(__file__), "icon_variants")
+icons = []
+for size in (16, 24, 32, 48, 64, 128, 256):
+    path = os.path.join(icon_dir, f"dictate_icon_{size}x{size}.png")
+    if os.path.exists(path):
+        icons.append(tk.PhotoImage(file=path))
+if icons:
+    app.iconphoto(True, *icons)
 
 app.mainloop()
 ```
-
----
-
-## DESKTOP FILE
-
-```desktop
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=My App
-Icon=/path/to/icon.png
-Exec=/path/to/python /path/to/app.py
-StartupWMClass=my-app
-Categories=Utility;
-Terminal=false
-```
-
-**Critical:** `StartupWMClass` must match `className` parameter exactly.
-
----
 
 ## TROUBLESHOOTING
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Generic icon | className not set | Use tk.Tk(className='...') |
-| WM_CLASS wrong | Using tb.Window() | Switch to tk.Tk() + tb.Style() |
+| Generic taskbar icon | AppUserModelID not set | Call SetCurrentProcessExplicitAppUserModelID |
+| Wrong icon | .ico not loaded | Use app.iconbitmap() with .ico file |
 | Theme not applied | Forgot tb.Style() | Add style = tb.Style(theme='...') |
-| Icon file missing | Wrong path | Use absolute path, verify exists |
-
----
-
-## POST-CREATION WM_CLASS FAILS
-
-**Don't try this:**
-```python
-# DOESN'T WORK
-app = tb.Window(themename='sandstone')
-app.tk.call('wm', 'class', app._w, "my-app")
-# Appears to execute but doesn't set WM_CLASS correctly
-```
-
-**Why:** WM_CLASS must be set at window creation time.
-
----
-
-## ADDITIONAL REQUIREMENTS
-
-**XFT Tk build:**
-```bash
-conda install -c conda-forge "tk=8.6.13=xft*"
-```
-
-**Font manager env var:**
-```bash
-export TTKBOOTSTRAP_FONT_MANAGER=tk
-```
-
-**See also:** DESKTOP_INTEGRATION.md, TKINTER_FONTS.md
+| Multiple taskbar entries | AppUserModelID mismatch | Ensure code + shortcut use same ID |

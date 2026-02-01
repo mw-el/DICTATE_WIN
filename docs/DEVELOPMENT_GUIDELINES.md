@@ -323,8 +323,8 @@ style = tb.Style(theme='sandstone')
 Core logic: dictate.py
 Config: config.py
 Hotkeys: hotkey_manager.py
-Tray: tray_icon_appindicator.py
-Utils: window_manager.py
+Tray: tray_icon.py
+Window/Paste: window_manager.py
 ```
 
 **Dependencies:**

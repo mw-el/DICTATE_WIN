@@ -23,7 +23,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install.ps1
 ```
 
-Optional: download models into the repo (for offline moves):
+Optional: download models into the repo (for offline use):
 
 ```powershell
 .\install.ps1 -DownloadModels
@@ -33,12 +33,6 @@ Or run directly:
 
 ```powershell
 .\download_models.ps1
-```
-
-Start Menu shortcut (Taskbar pin with correct icon):
-
-```powershell
-.\create_shortcut.ps1
 ```
 
 Force a specific environment:
@@ -69,7 +63,7 @@ Force a specific environment:
 - `~/Music/dictate/transcripts/`
 - `~/Music/dictate/logs/`
 - `./models/` (optional local model cache)
-- Start Menu shortcut `Dictate` (created by installer)
+- Start Menu shortcut `Dictate` (created automatically by installer)
 
 ---
 

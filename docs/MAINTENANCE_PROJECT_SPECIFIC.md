@@ -1,17 +1,16 @@
-# Dictate App - Project-Specific Maintenance
+# Dictate App - Project-Specific Maintenance (Windows)
 
 **For humans:** Additional maintenance checks specific to this voice transcription app. Run alongside generic maintenance checklist.
 
 **For AI:** Execute these Dictate-specific validation tasks during maintenance.
-
 
 ## VALIDATION TASKS
 
 ### 1. Audio & Transcription
 
 **Test models:**
-```bash
-python dictate.py
+```powershell
+.\start_dictate.ps1
 # Test: large-v3-turbo, small, base
 # Languages: DE-CH (Swiss German), DE-DE, EN
 # Record 10s sample, verify quality
@@ -20,35 +19,35 @@ python dictate.py
 **Check:**
 - [ ] Model downloads work
 - [ ] Swiss German transcription quality acceptable
-- [ ] PyAudio detects microphone
+- [ ] ffmpeg detects DirectShow microphone
 - [ ] No audio buffer underruns
 
 ### 2. Desktop Integration
 
 **Test tray icon:**
-```bash
-./start_dictate.sh
+```powershell
+.\start_dictate.ps1
 # Verify: Icon appears in system tray
 # Test: All menu items work
 # Test: Hotkey (right Ctrl) triggers recording
 ```
 
 **Check:**
-- [ ] Tray icon visible (Gnome/KDE/Unity)
+- [ ] Tray icon visible in Windows system tray
 - [ ] Menu items functional
 - [ ] Hotkey detection works
-- [ ] Auto-paste works (xdotool)
+- [ ] Auto-paste works (clipboard + pynput)
 
 ### 3. GUI State Management
 
 **Test withdrawn-window bug fix:**
-```bash
+```powershell
 # Test A: GUI open
-python dictate.py
+.\start_dictate.ps1
 # Click Record, speak, verify <2s delay
 
 # Test B: GUI minimized (hotkey mode)
-# Minimize to tray
+# Close window (hides to tray)
 # Press right Ctrl, speak, release
 # Verify <2s delay (not 5-10s!)
 ```
@@ -56,15 +55,16 @@ python dictate.py
 **Check:**
 - [ ] Both modes equally fast
 - [ ] No multi-second blocking
-- [ ] Fix active: `grep -c "if app.state() != 'withdrawn'" dictate.py` ≥ 2
+- [ ] Fix active: `Select-String "if app.state\(\) != 'withdrawn'" dictate.py` shows 2+ matches
 
 ### 4. Dependencies
 
 **Critical packages:**
-```bash
-conda activate fasterwhisper
-python -c "import av; print('PyAV:', av.__version__)"  # Must be 16.0.1
-python -c "import faster_whisper; print('faster-whisper:', faster_whisper.__version__)"  # 1.2.0
+```powershell
+.\start_dictate.ps1
+# In the conda environment:
+python -c "import av; print('PyAV:', av.__version__)"           # Must be 16.0.1
+python -c "import faster_whisper; print('faster-whisper')"      # 1.2.0
 python -c "import torch; print('PyTorch:', torch.__version__)"  # 2.5.1
 ```
 
@@ -72,13 +72,14 @@ python -c "import torch; print('PyTorch:', torch.__version__)"  # 2.5.1
 - [ ] PyAV==16.0.1 (CRITICAL for audio)
 - [ ] faster-whisper==1.2.0
 - [ ] PyTorch==2.5.1
-- [ ] TTKBOOTSTRAP_FONT_MANAGER=tk (env var)
+- [ ] TTKBOOTSTRAP_FONT_MANAGER=tk (env var set in start_dictate.ps1)
 
 ### 5. File System
 
 **Verify directories:**
-```bash
-ls -ld ~/Music/dictate/{transcripts,logs}
+```powershell
+Test-Path "$env:USERPROFILE\Music\dictate\transcripts"
+Test-Path "$env:USERPROFILE\Music\dictate\logs"
 ```
 
 **Check:**
@@ -89,102 +90,54 @@ ls -ld ~/Music/dictate/{transcripts,logs}
 ### 6. Configuration
 
 **Test config loading:**
-```bash
-# Verify config.yml or uses defaults
-# Test: Language selection persists
-# Test: Model selection persists
-```
-
+- [ ] Config created at ~/.config/dictate/config.json on first run
+- [ ] Language selection persists across restarts
+- [ ] Model selection persists across restarts
 
 ## PROJECT-SPECIFIC FILES
 
 ### dictate.py
 
 **Critical sections:**
-- `initialize_model()` - Line ~257: withdrawn-window fix
-- `toggle_recording()` - Line ~384: withdrawn-window fix
+- `detect_gpu_availability()` — GPU/CUDA detection
+- `initialize_model()` — withdrawn-window fix
+- `toggle_recording()` — withdrawn-window fix
 - Hotkey detection: pynput listener
 
 **Validation:**
-```bash
-grep -n "if app.state() != 'withdrawn'" dictate.py
+```powershell
+Select-String "if app.state\(\) != 'withdrawn'" dictate.py
 # Should show 2+ locations
 ```
 
-### tray_icon.py / tray_icon_appindicator.py
+### tray_icon.py
 
-**Test both backends:**
-- AppIndicator3 (Gnome/Unity)
-- Fallback (KDE/other)
+**Test:** Right-click tray icon, verify all menu items work.
 
-### install.sh
+### install.ps1
 
 **Verify matches:**
-- Bill of Materials section up-to-date
-- PyAV check present
-- Environment variable activation present
-- Withdrawn-window fix validation present
-
+- Conda environment creation
+- Start Menu shortcut creation (calls create_shortcut.ps1)
+- Directory creation (~/Music/dictate/)
 
 ## RELEASE CHECKLIST
 
 **Before release:**
 - [ ] All models tested (large-v3-turbo, small, base)
 - [ ] Swiss German quality verified
-- [ ] Tray icon works on Gnome
+- [ ] Tray icon works on Windows
 - [ ] Hotkey mode fast (withdrawn-window fix verified)
-- [ ] PyAV 16.0.1 in environment.yml
-- [ ] install.sh validates all critical components
-- [ ] smoke_test.py covers audio + transcription
+- [ ] PyAV 16.0.1 in environment files
+- [ ] install.ps1 creates conda env + Start Menu shortcut
+- [ ] smoke_test.py covers imports + GPU + directories
 - [ ] README.md shows correct model sizes
-- [ ] CHANGELOG.md documents model/quality changes
-
-
-## SMOKE TEST
-
-**Quick validation:**
-```python
-# smoke_test.py additions for Dictate
-def test_audio_backend():
-    import pyaudio
-    p = pyaudio.PyAudio()
-    assert p.get_device_count() > 0
-    p.terminate()
-
-def test_whisper_model():
-    from faster_whisper import WhisperModel
-    model = WhisperModel("tiny", device="cpu")
-    assert model is not None
-
-def test_pyav():
-    import av
-    assert av.__version__ == "16.0.1"
-
-def test_withdrawn_fix():
-    with open("dictate.py") as f:
-        count = f.read().count("if app.state() != 'withdrawn'")
-    assert count >= 2
-```
-
+- [ ] CHANGELOG.md documents changes
 
 ## KNOWN ISSUES
 
 | Issue | System | Fix |
 |-------|--------|-----|
-| Slow hotkey mode | Unity desktop | Apply withdrawn-window fix |
-| No tray icon | Wayland | Use XWayland or fallback |
-| Audio glitches | Some USB mics | Adjust buffer size in config |
-| Missing PyAV | Fresh install | install.sh checks and installs |
-
-
-## EXECUTION
-
-1. Run generic maintenance checklist first
-2. Execute validation tasks above
-3. Run project-specific smoke tests
-4. Fix any failures
-5. Update project-specific docs if needed
-
-**Frequency:** Before each release, after major code changes.
-
-
+| Slow hotkey mode | Windows | Apply withdrawn-window fix |
+| Audio glitches | Some USB mics | Set audio_device in config |
+| Blurry UI | High-DPI displays | DPI awareness in dictate.py |

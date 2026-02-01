@@ -106,21 +106,13 @@ def detect_gpu_availability():
         'error': None,
         'details': []
     }
-    
+
     if not HAS_TORCH:
         gpu_info['error'] = "PyTorch not available"
         gpu_info['details'].append("- Install PyTorch with CUDA support")
-    return gpu_info
+        return gpu_info
 
-def resolve_model_source(model_name):
-    """Prefer local models/ directory if present."""
-    local_dir = os.path.join(os.path.dirname(__file__), "models", model_name)
-    if os.path.isdir(local_dir):
-        return local_dir
-    return model_name
-    
     try:
-        # Check basic CUDA availability
         if not torch.cuda.is_available():
             gpu_info['error'] = "CUDA not available"
             gpu_info['details'].extend([
@@ -129,41 +121,44 @@ def resolve_model_source(model_name):
                 "- Check: nvidia-smi command"
             ])
             return gpu_info
-        
-        # Check device count
+
         device_count = torch.cuda.device_count()
         gpu_info['details'].append(f"- CUDA devices detected: {device_count}")
-        
+
         if device_count == 0:
             gpu_info['error'] = "No CUDA devices found"
             return gpu_info
-        
-        # Get device info
+
         device_name = torch.cuda.get_device_name(0)
         gpu_info['details'].append(f"- Device: {device_name}")
-        
-        # Test tensor creation
+
         test_tensor = torch.randn(10, device='cuda')
         del test_tensor
         torch.cuda.empty_cache()
-        
+
         gpu_info['available'] = True
-        gpu_info['details'].append("✅ GPU test successful")
+        gpu_info['details'].append("GPU test successful")
         return gpu_info
-        
+
     except Exception as e:
         gpu_info['error'] = f"GPU test failed: {str(e)}"
         gpu_info['details'].extend([
-            "- This error occurred yesterday after working fine",
             "- Possible causes:",
-            "  • CUDA_VISIBLE_DEVICES changed",
-            "  • Conda environment issues", 
-            "  • Driver/library version mismatch",
+            "  - CUDA_VISIBLE_DEVICES changed",
+            "  - Conda environment issues",
+            "  - Driver/library version mismatch",
             "- Try: nvidia-smi",
             "- Try: set CUDA_VISIBLE_DEVICES",
             "- Try: conda list"
         ])
         return gpu_info
+
+def resolve_model_source(model_name):
+    """Prefer local models/ directory if present."""
+    local_dir = os.path.join(os.path.dirname(__file__), "models", model_name)
+    if os.path.isdir(local_dir):
+        return local_dir
+    return model_name
 
 # Settings - auto-adapt to GPU availability
 gpu_info = detect_gpu_availability()

@@ -16,7 +16,7 @@ A lightweight, GPU-accelerated speech-to-text transcription application optimize
 ### Quick Start (PowerShell)
 
 ```powershell
-# Clone or download the repository
+# Copy or clone the repository to any location
 cd C:\path\to\dictate
 
 # Allow scripts for this session and run installer
@@ -27,12 +27,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install.ps1 -ForceGpu
 .\install.ps1 -ForceCpu
 
-# Optional: download models into the repo (for offline moves)
+# Optional: download models into the repo (for offline use)
 .\install.ps1 -DownloadModels
-
-# Create Start Menu shortcut (for correct Taskbar icon/grouping)
-.\create_shortcut.ps1
 ```
+
+The installer creates the conda environment, data directories, and a Start Menu shortcut automatically.
 
 ### Manual Environment Setup
 
