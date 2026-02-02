@@ -418,11 +418,30 @@ def _set_window_icons(hwnd, icon_path):
         WM_SETICON = 0x0080
         ICON_SMALL = 0
         ICON_BIG = 1
+
+        # Use the actual Windows DPI-aware icon sizes to avoid scaling blur.
+        SM_CXICON = 11
+        SM_CYICON = 12
+        SM_CXSMICON = 49
+        SM_CYSMICON = 50
+
         user32 = ctypes.windll.user32
-        hicon = user32.LoadImageW(None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
-        if hicon:
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+        try:
+            cx_small = int(user32.GetSystemMetrics(SM_CXSMICON))
+            cy_small = int(user32.GetSystemMetrics(SM_CYSMICON))
+            cx_big = int(user32.GetSystemMetrics(SM_CXICON))
+            cy_big = int(user32.GetSystemMetrics(SM_CYICON))
+        except Exception:
+            cx_small, cy_small = 16, 16
+            cx_big, cy_big = 256, 256
+
+        hicon_small = user32.LoadImageW(None, icon_path, IMAGE_ICON, cx_small, cy_small, LR_LOADFROMFILE)
+        hicon_big = user32.LoadImageW(None, icon_path, IMAGE_ICON, cx_big, cy_big, LR_LOADFROMFILE)
+
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
     except Exception as e:
         print(f"Warning: Could not set window icon: {e}")
 
@@ -1201,7 +1220,7 @@ font_scale = auto_scale
 widget_scale = auto_scale
 print(f"? DPI detected: {detected_dpi} DPI (scale: {auto_scale:.2f}x)")
 
-set_windows_app_id("Dictate")
+set_windows_app_id(os.environ.get("DICTATE_APPID", "Dictate"))
 app = tk.Tk(className='dictate')
 try:
     app.tk.call("tk", "scaling", 1.0)
@@ -1272,11 +1291,12 @@ print(f"✅ Configured {len(configured_fonts)} named fonts BEFORE theme setup")
 style = tb.Style(theme='sandstone')  # Apply ttkbootstrap theme to existing Tk window
 print(f"✅ Applied ttkbootstrap 'sandstone' theme")
 
-app.title("Dictate - Large-v3-Turbo + Swiss German")
+app.title("Dictate")
 
 # Scale window geometry based on widget_scale (NOT font_scale!)
 # Original: 200x1080+1720+0
-base_width = 200
+# Width set to 220 - narrow but "Dictate" still readable
+base_width = 220
 base_height = 1080
 screen_w = app.winfo_screenwidth()
 screen_h = app.winfo_screenheight()
@@ -1384,28 +1404,39 @@ def force_window_visible():
 
 app.force_window_visible = force_window_visible
 
-# Set application icon
-icon_dir = os.path.join(os.path.dirname(__file__), "icon_variants")
-icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
-icons = []
+# Set application icon (Windows). Titlebar always shows an icon; without this it falls back to a default.
+# IMPORTANT: Use PNG icons with wm iconphoto for DPI-aware rendering
+# iconbitmap() doesn't work properly with DPI-aware Tkinter apps
 try:
-    for size in (16, 24, 32, 48, 64, 128, 256):
-        icon_path = os.path.join(icon_dir, f"dictate_icon_{size}x{size}.png")
-        if os.path.exists(icon_path):
-            icons.append(tk.PhotoImage(file=icon_path))
-    if icons:
-        app.icons = icons  # keep references
-        app.iconphoto(True, *icons)
-    if os.path.exists(icon_ico):
-        app.iconbitmap(icon_ico)
-        app.update_idletasks()
-        _set_window_icons(app.winfo_id(), icon_ico)
-    if icons or os.path.exists(icon_ico):
-        print("✅ Application icon loaded")
+    # Load multiple PNG sizes for DPI-aware icon rendering
+    icon_pngs_dir = os.path.join(os.path.dirname(__file__), "icon_pngs")
+    if os.path.exists(icon_pngs_dir):
+        # Load all PNG sizes (Tkinter will pick the best one for current DPI)
+        icon_sizes = [256, 128, 64, 48, 40, 32, 28, 24, 20, 16]  # Largest first
+        photo_images = []
+
+        for size in icon_sizes:
+            png_path = os.path.join(icon_pngs_dir, f"dictate_{size}.png")
+            if os.path.exists(png_path):
+                try:
+                    photo = tk.PhotoImage(file=png_path)
+                    photo_images.append(photo)
+                except Exception:
+                    pass
+
+        if photo_images:
+            # Use wm iconphoto - this is DPI-aware!
+            app.iconphoto(True, *photo_images)
+            print(f"✅ Loaded {len(photo_images)} DPI-aware icon sizes")
     else:
-        print("Warning: Icon files not found")
+        # Fallback to ICO if PNGs not available
+        icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
+        if os.path.exists(icon_ico):
+            app.iconbitmap(icon_ico)
+            app.update_idletasks()
+            _set_window_icons(app.winfo_id(), icon_ico)
 except Exception as e:
-    print(f"Warning: Could not load icon: {e}")
+    print(f"⚠️ Icon loading warning: {e}")
 
 # NOTE: Font configuration already done BEFORE theme setup above
 # No additional font configuration needed here
@@ -1483,6 +1514,32 @@ def on_window_close():
         dialog.resizable(False, False)
         dialog.transient(app)
         dialog.grab_set()
+
+        # Set dialog icon (same as main window) - use DPI-aware PNG icons
+        try:
+            icon_pngs_dir = os.path.join(os.path.dirname(__file__), "icon_pngs")
+            if os.path.exists(icon_pngs_dir):
+                icon_sizes = [256, 128, 64, 48, 40, 32, 28, 24, 20, 16]
+                photo_images = []
+                for size in icon_sizes:
+                    png_path = os.path.join(icon_pngs_dir, f"dictate_{size}.png")
+                    if os.path.exists(png_path):
+                        try:
+                            photo = tk.PhotoImage(file=png_path)
+                            photo_images.append(photo)
+                        except Exception:
+                            pass
+                if photo_images:
+                    dialog.iconphoto(True, *photo_images)
+            else:
+                # Fallback to ICO
+                icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
+                if os.path.exists(icon_ico):
+                    dialog.iconbitmap(icon_ico)
+                    dialog.update_idletasks()
+                    _set_window_icons(dialog.winfo_id(), icon_ico)
+        except Exception:
+            pass
 
         label = tk.Label(dialog, text="Was moechten Sie tun?")
         label.pack(padx=16, pady=(14, 10))
