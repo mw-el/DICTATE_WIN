@@ -249,8 +249,8 @@ def paste_text_clipboard(text, window_id=None, _window_class_hint=None):
     # Focus target window if specified
     if window_id:
         if not focus_window(window_id):
-            print("Could not focus target window")
-            return False
+            # Windows may deny focus changes; continue and paste to current foreground window
+            print("Could not focus target window; pasting to current foreground window")
 
     try:
         import pyperclip

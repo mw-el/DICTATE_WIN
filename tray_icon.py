@@ -96,25 +96,30 @@ class TrayIcon:
         print(f"\n{'='*50}")
         print(f"🖱️ TOGGLE WINDOW CLICKED")
         print(f"   icon={icon}, item={item}")
-        try:
-            visible = self.app_window.winfo_viewable()
-            print(f"   Window currently visible: {visible}")
-
-            if visible:
-                self.app_window.withdraw()
-                print("   🔕 Window hidden")
-            else:
-                if hasattr(self.app_window, "force_window_visible"):
-                    self.app_window.force_window_visible()
+        def _toggle():
+            try:
+                state = self.app_window.state()
+                visible = state != "withdrawn"
+                print(f"   Window state: {state} visible={visible}")
+                if visible:
+                    self.app_window.withdraw()
+                    print("   🔕 Window hidden")
                 else:
-                    self.app_window.deiconify()
-                    self.app_window.lift()
-                    self.app_window.focus_force()
-                print("   🔔 Window shown")
-        except Exception as e:
-            print(f"   ⚠️ Error toggling window: {e}")
-            import traceback
-            traceback.print_exc()
+                    if hasattr(self.app_window, "force_window_visible"):
+                        self.app_window.force_window_visible()
+                    else:
+                        self.app_window.deiconify()
+                        self.app_window.lift()
+                        self.app_window.focus_force()
+                    print("   🔔 Window shown")
+            except Exception as e:
+                print(f"   ⚠️ Error toggling window: {e}")
+                import traceback
+                traceback.print_exc()
+        try:
+            self.app_window.after(0, _toggle)
+        except Exception:
+            _toggle()
         print(f"{'='*50}\n")
 
     def quit_app(self, icon=None, item=None):
@@ -122,8 +127,7 @@ class TrayIcon:
         print(f"\n{'='*50}")
         print("👋 QUIT CLICKED - Quitting from tray menu...")
         print(f"{'='*50}\n")
-        if self.icon:
-            self.icon.stop()
+        self.stop()
         self.on_quit()  # Calls on_closing() which handles all cleanup
 
     def set_language(self, lang_code):
@@ -259,9 +263,9 @@ class TrayIcon:
 
         # Use NON-daemon thread so tray icon can receive events properly
         # Daemon threads don't process events reliably in pystray
-        icon_thread = threading.Thread(target=run_icon, daemon=False, name="TrayIconThread")
-        icon_thread.start()
-        print(f"🔧 Icon thread started: daemon={icon_thread.daemon}, alive={icon_thread.is_alive()}, name={icon_thread.name}")
+        self.icon_thread = threading.Thread(target=run_icon, daemon=False, name="TrayIconThread")
+        self.icon_thread.start()
+        print(f"🔧 Icon thread started: daemon={self.icon_thread.daemon}, alive={self.icon_thread.is_alive()}, name={self.icon_thread.name}")
         print(f"⚠️  IMPORTANT: Using non-daemon thread for proper event handling")
 
         print("✅ Tray icon started")
@@ -286,6 +290,19 @@ class TrayIcon:
             self.icon.icon = self.create_icon_image(color_map.get(status, "green"))
             self.icon.title = f"Dictate - {status.capitalize()}"
             print(f"🎨 Tray icon status: {status} → {color_map.get(status, 'green')}")
+
+    def stop(self):
+        """Stop tray icon and its thread."""
+        try:
+            if self.icon:
+                self.icon.stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "icon_thread") and self.icon_thread:
+                self.icon_thread.join(timeout=1.0)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

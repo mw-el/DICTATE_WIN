@@ -19,7 +19,7 @@
 **Check:**
 - [ ] Model downloads work
 - [ ] Swiss German transcription quality acceptable
-- [ ] ffmpeg detects DirectShow microphone
+- [ ] WASAPI capture works (sounddevice)
 - [ ] No audio buffer underruns
 
 ### 2. Desktop Integration
@@ -139,5 +139,5 @@ Select-String "if app.state\(\) != 'withdrawn'" dictate.py
 | Issue | System | Fix |
 |-------|--------|-----|
 | Slow hotkey mode | Windows | Apply withdrawn-window fix |
-| Audio glitches | Some USB mics | Set audio_device in config |
+| Audio glitches | Some USB mics | Check Windows input device + sounddevice |
 | Blurry UI | High-DPI displays | DPI awareness in dictate.py |

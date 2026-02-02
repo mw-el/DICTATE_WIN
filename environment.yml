@@ -10,7 +10,6 @@ dependencies:
   - pip
   - setuptools
   - wheel
-  - pytorch::ffmpeg=4.3
   - pytorch::pytorch=2.5.1
   - pytorch::torchaudio=2.5.1
   - pytorch::cpuonly
@@ -19,6 +18,8 @@ dependencies:
       - faster-whisper==1.2.0
       - ctranslate2==4.6.0
       - ttkbootstrap==1.14.7
+      - sounddevice==0.4.7
+      - soundfile==0.12.1
       - pyperclip==1.11.0
       - pynput==1.8.1
       - pystray

@@ -22,7 +22,6 @@ DEFAULT_CONFIG = {
     "paste_method": "clipboard",     # Options: clipboard
     "window_toggle_hotkey": "ctrl+shift+d",  # Hotkey to show/hide window (future)
     "recording_timeout_seconds": 300,  # 5 minutes safety timeout
-    "audio_device": "",              # Windows: DirectShow audio device name (auto-detect if empty)
     "cpu_quality_preset": "MED"      # Options: HI, MED, LO (CPU-only)
 }
 

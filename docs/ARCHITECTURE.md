@@ -55,8 +55,8 @@ User → Hotkey → Record → Transcribe → Save → Paste
    - Trigger: `toggle_recording()`
 
 2. **Audio Recording** (dictate.py)
-   - ffmpeg captures microphone via DirectShow
-   - Stores as MP3 file
+   - sounddevice captures microphone via WASAPI
+   - Stores as WAV file
    - Visual feedback via tray icon (red)
 
 3. **Transcription** (dictate.py)
@@ -82,7 +82,7 @@ User → Hotkey → Record → Transcribe → Save → Paste
 
 **Dependencies:**
 - faster-whisper (transcription)
-- ffmpeg (audio capture via DirectShow)
+- sounddevice + soundfile (audio capture via WASAPI)
 - PyAV (audio decoding)
 - pynput (hotkey + paste simulation)
 - ttkbootstrap (GUI)
@@ -123,6 +123,8 @@ PyTorch: 2.5.1
 faster-whisper: 1.2.0
 ctranslate2: 4.6.0
 ttkbootstrap: 1.14.7
+sounddevice: 0.4.7
+soundfile: 0.12.1
 pynput: 1.8.1
 pyperclip: 1.11.0
 pywin32                    # Windows COM/shortcut APIs
@@ -132,7 +134,7 @@ pywin32                    # Windows COM/shortcut APIs
 
 ```
 Miniconda/Anaconda         # Environment management
-ffmpeg                     # Audio recording (bundled in conda env)
+WASAPI (via sounddevice)   # Audio recording
 ```
 
 

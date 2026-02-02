@@ -10,6 +10,7 @@ A lightweight, GPU-accelerated speech-to-text transcription application optimize
 - Compact UI designed for side-monitor placement
 - Smart auto-paste using clipboard + hotkeys
 - Transcript history with timestamped files
+- Low-latency audio capture on Windows (WASAPI via sounddevice)
 
 ## Installation
 
@@ -32,6 +33,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 The installer creates the conda environment, data directories, and a Start Menu shortcut automatically.
+It also attempts to accept the Conda Terms of Service for default channels (required on newer Conda).
 
 ### Manual Environment Setup
 
@@ -49,10 +51,11 @@ python -c "import faster_whisper; import ttkbootstrap; print('Ready!')"
 
 Transcripts are saved in `~/Music/dictate/`.
 If `./models/` exists, Dictate will load models from there first.
+Audio capture uses WASAPI via `sounddevice` (low latency) and recordings are saved as `.wav`.
 
 ## Troubleshooting
 
-- If audio device detection fails, set `audio_device` in `~/.config/dictate/config.json`.
+- If audio capture fails, check the default Windows input device and reinstall the environment (sounddevice/soundfile).
 - If GPU fails, switch to CPU mode from the tray menu.
 
 ## License

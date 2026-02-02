@@ -47,6 +47,8 @@ Force a specific environment:
 
 **That's it.** The script handles everything else.
 
+Note: The installer will attempt to accept the Conda Terms of Service for the default channels automatically. If it cannot, see TROUBLESHOOTING.md for the manual commands.
+
 ---
 
 ## What Gets Installed
@@ -57,6 +59,7 @@ Force a specific environment:
 - PyTorch 2.5.1 (GPU or CPU; GPU requires NVIDIA/CUDA)
 - faster-whisper, ctranslate2, av
 - ttkbootstrap, pynput, pyperclip, pystray, pillow
+- sounddevice + soundfile (low-latency WASAPI capture on Windows)
 
 ### Directories
 
@@ -72,6 +75,8 @@ Force a specific environment:
 ```powershell
 .\start_dictate.ps1
 ```
+
+Note: Audio is captured via WASAPI (sounddevice). Recordings are saved as `.wav`.
 
 ---
 

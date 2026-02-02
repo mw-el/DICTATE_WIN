@@ -2,15 +2,39 @@
 
 ## Common Issues
 
+### Audio capture latency / first words cut off (Windows)
+
+Dictate uses the low-latency WASAPI capture path via `sounddevice`.
+If you still notice delay or missing first words:
+
+1. Update the environment (so sounddevice/soundfile are installed).
+2. Check the default Windows input device (Sound Settings).
+3. Restart Dictate.
+
+Note: Recordings are saved as `.wav` files.
+
+### Conda Terms of Service error (CondaToSNonInteractiveError)
+
+If installation fails with a message about accepting Terms of Service for the default channels, run:
+
+```powershell
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/msys2
+```
+
+Then re-run:
+
+```powershell
+.\install.ps1
+```
+
 ### 1) "faster_whisper module not found"
 - Ensure you launched via `start_dictate.ps1` or activated the conda environment.
 
 ### 2) No audio device detected
-- Open `~/.config/dictate/config.json` and set `audio_device` to your DirectShow device name.
-- To list devices, run:
-  ```powershell
-  ffmpeg -hide_banner -list_devices true -f dshow -i dummy
-  ```
+- Verify the default Windows input device in Sound Settings.
+- Reinstall the environment to restore `sounddevice`/`soundfile`.
 
 ### 3) GPU not available
 - Run `nvidia-smi` to confirm the driver (NVIDIA only).

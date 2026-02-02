@@ -13,8 +13,6 @@ __version__ = "1.0.0"
 
 import os
 import threading
-import subprocess
-import shutil
 import ctypes
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
@@ -28,6 +26,15 @@ import re
 import sys
 import traceback
 import glob  # NEW: for transcript file discovery
+
+# Single-instance guard (Windows)
+try:
+    import win32event
+    import win32api
+    import winerror
+    HAS_SINGLE_INSTANCE = True
+except ImportError:
+    HAS_SINGLE_INSTANCE = False
 
 # Import hotkey system components
 from config import load_config, save_config
@@ -50,6 +57,15 @@ except ImportError:
     HAS_TORCH = False
     print("Warning: torch module not found.")
 
+# Try importing low-latency audio capture (PortAudio/WASAPI)
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    HAS_SOUNDEVICE = True
+except ImportError:
+    HAS_SOUNDEVICE = False
+    print("Warning: sounddevice/soundfile not found.")
+
 # Simple exception handler (keep your existing one)
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -68,6 +84,13 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
 sys.excepthook = global_exception_handler
+
+# Prevent multiple running instances (avoids duplicate tray icons/taskbar entries)
+if HAS_SINGLE_INSTANCE:
+    _mutex = win32event.CreateMutex(None, False, "Global\\DictateSingleton")
+    if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+        messagebox.showinfo("Dictate", "Dictate is already running.")
+        sys.exit(0)
 
 # Windows taskbar grouping/icon
 def set_windows_app_id(app_id):
@@ -204,11 +227,13 @@ language_codes = {"DE-DE": "de", "DE-CH": "de", "EN": "en"}
 model = None
 recording_in_progress = False
 audio_file_path = None
-ffmpeg_process = None
-ffmpeg_log_handle = None
-windows_audio_device = None
+recording_source = "button"
+app_hwnd = None
+last_external_window_id = None
 model_load_lock = threading.Lock()
 model_loading = False
+sd_stream = None
+sd_file = None
 
 # Hotkey system global variables
 hotkey_manager = None
@@ -244,6 +269,17 @@ def swiss_german_convert(text):
 def ensure_directory(path):
     os.makedirs(path, exist_ok=True)
 
+def debug_log(message):
+    """Append hotkey/recording debug info to a log file."""
+    try:
+        log_dir = os.path.expanduser("~/Music/dictate/logs")
+        ensure_directory(log_dir)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with open(os.path.join(log_dir, "hotkey_debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"{ts} {message}\n")
+    except Exception:
+        pass
+
 def sanitize_filename(text):
     text = text.lower()
     text = re.sub(r'[^\w\s-]', '', text)
@@ -258,136 +294,94 @@ def get_output_paths(transcript_text):
     output_dir = os.path.expanduser("~/Music/dictate")
     ensure_directory(output_dir)
     
-    audio_file_path = os.path.join(output_dir, f"{filename_base}.mp3")
+    audio_file_path = os.path.join(output_dir, f"{filename_base}.wav")
     transcript_file_path = os.path.join(output_dir, f"{filename_base}.txt")
     
     return audio_file_path, transcript_file_path
 
-def _detect_windows_audio_device():
-    """Return first DirectShow audio device name or None if not found."""
-    try:
-        ffmpeg_path = _resolve_ffmpeg_path()
-        result = subprocess.run(
-            [ffmpeg_path, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        output = (result.stderr or "") + (result.stdout or "")
-        devices = []
-        in_audio = False
-        for line in output.splitlines():
-            if "DirectShow audio devices" in line:
-                in_audio = True
-                continue
-            if "DirectShow video devices" in line:
-                in_audio = False
-            if in_audio:
-                match = re.search(r"\"(.+?)\"", line)
-                if match:
-                    devices.append(match.group(1))
-        if devices:
-            return devices[0]
-    except Exception as e:
-        print(f"âš ï¸ Audio device detection failed: {e}")
-    return None
+def get_output_paths_with_ext(transcript_text, audio_ext):
+    timestamp = datetime.now().strftime("%y-%m-%d_%H-%M")
+    first_words = " ".join(transcript_text.strip().split()[:7]) or "untitled"
+    filename_base = f"{timestamp}_{sanitize_filename(first_words)}"
 
-def _get_windows_audio_device():
-    """Resolve Windows audio device from config or auto-detect and persist."""
-    global windows_audio_device
-    if windows_audio_device:
-        return windows_audio_device
-    configured = config.get("audio_device", "").strip()
-    if configured:
-        windows_audio_device = configured
-        return windows_audio_device
-    detected = _detect_windows_audio_device()
-    if detected:
-        windows_audio_device = detected
-        config["audio_device"] = detected
-        save_config(config)
-        print(f"âœ… Auto-detected audio device: {detected}")
-        return windows_audio_device
-    return None
+    output_dir = os.path.expanduser("~/Music/dictate")
+    ensure_directory(output_dir)
 
-def _build_ffmpeg_command(audio_path):
-    ffmpeg_path = _resolve_ffmpeg_path()
-    device = _get_windows_audio_device()
-    if device:
-        input_spec = f"audio={device}"
-    else:
-        input_spec = "audio=default"
-        print("âš ï¸ No DirectShow device found, trying audio=default")
-    return [
-        ffmpeg_path, "-y",
-        "-f", "dshow",
-        "-i", input_spec,
-        "-ac", "1",
-        "-ar", "16000",
-        "-c:a", "libmp3lame",
-        "-b:a", "192k",
-        audio_path
-    ]
+    audio_file_path = os.path.join(output_dir, f"{filename_base}.{audio_ext}")
+    transcript_file_path = os.path.join(output_dir, f"{filename_base}.txt")
 
-def start_ffmpeg_recording(audio_path):
-    """Start ffmpeg recording and store the process handle."""
-    global ffmpeg_process, ffmpeg_log_handle
-    cmd = _build_ffmpeg_command(audio_path)
-    creationflags = 0
-    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-        creationflags = subprocess.CREATE_NO_WINDOW
-    log_dir = os.path.expanduser("~/Music/dictate/logs")
-    ensure_directory(log_dir)
-    log_path = os.path.join(log_dir, f"ffmpeg_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
-    ffmpeg_log_handle = open(log_path, "w", encoding="utf-8", errors="replace")
-    ffmpeg_process = subprocess.Popen(
-        cmd,
-        stdout=ffmpeg_log_handle,
-        stderr=ffmpeg_log_handle,
-        stdin=subprocess.PIPE,
-        creationflags=creationflags
-    )
-    return log_path
+    return audio_file_path, transcript_file_path
 
-def stop_ffmpeg_recording():
-    """Stop ffmpeg recording if running."""
-    global ffmpeg_process, ffmpeg_log_handle
-    if ffmpeg_process and ffmpeg_process.poll() is None:
+
+def _start_sounddevice_recording(audio_path):
+    """Start low-latency recording via sounddevice (PortAudio/WASAPI)."""
+    global sd_stream, sd_file
+    if not HAS_SOUNDEVICE:
+        raise RuntimeError("sounddevice not available")
+    sd.default.samplerate = 16000
+    sd.default.channels = 1
+    sd.default.dtype = "int16"
+    sd.default.latency = "low"
+    sd_file = sf.SoundFile(audio_path, mode="w", samplerate=16000, channels=1, subtype="PCM_16")
+
+    def _callback(indata, frames, time_info, status):
+        if status:
+            # avoid spamming UI; log to console
+            print(f"Audio status: {status}")
+        sd_file.write(indata)
+
+    sd_stream = sd.InputStream(callback=_callback)
+    sd_stream.start()
+
+def _stop_sounddevice_recording():
+    """Stop sounddevice recording if running."""
+    global sd_stream, sd_file
+    if sd_stream is not None:
         try:
-            if ffmpeg_process.stdin:
-                try:
-                    ffmpeg_process.stdin.write(b"q\n")
-                    ffmpeg_process.stdin.flush()
-                except Exception:
-                    pass
-            ffmpeg_process.wait(timeout=3)
-        except Exception:
-            try:
-                ffmpeg_process.terminate()
-                ffmpeg_process.wait(timeout=2)
-            except Exception:
-                try:
-                    ffmpeg_process.kill()
-                except Exception:
-                    pass
-    ffmpeg_process = None
-    if ffmpeg_log_handle:
-        try:
-            ffmpeg_log_handle.flush()
-            ffmpeg_log_handle.close()
+            sd_stream.stop()
         except Exception:
             pass
-        ffmpeg_log_handle = None
+        try:
+            sd_stream.close()
+        except Exception:
+            pass
+        sd_stream = None
+    if sd_file is not None:
+        try:
+            sd_file.flush()
+            sd_file.close()
+        except Exception:
+            pass
+        sd_file = None
 
-def _resolve_ffmpeg_path():
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg:
-        return ffmpeg
-    env_root = os.path.abspath(os.path.join(os.path.dirname(sys.executable), ".."))
-    candidate = os.path.join(env_root, "Library", "bin", "ffmpeg.exe")
-    if os.path.exists(candidate):
-        return candidate
-    return "ffmpeg"
+def start_audio_capture(audio_path):
+    """Start recording using the preferred capture backend."""
+    if not HAS_SOUNDEVICE:
+        raise RuntimeError("sounddevice/soundfile not available; reinstall the environment")
+    _start_sounddevice_recording(audio_path)
+    return "sounddevice"
+
+def stop_audio_capture():
+    """Stop recording for the current backend."""
+    if sd_stream is not None:
+        _stop_sounddevice_recording()
+
+def _set_window_icons(hwnd, icon_path):
+    if not icon_path or not os.path.exists(icon_path):
+        return
+    try:
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        user32 = ctypes.windll.user32
+        hicon = user32.LoadImageW(None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+        if hicon:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+    except Exception as e:
+        print(f"Warning: Could not set window icon: {e}")
 
 def beep():
     try:
@@ -435,6 +429,11 @@ def initialize_model():
         return
 
     model_loading = True
+    try:
+        if not recording_in_progress:
+            set_record_disabled()
+    except Exception:
+        pass
     
     if not HAS_WHISPER:
         error_msg = "faster_whisper module not found"
@@ -443,6 +442,8 @@ def initialize_model():
         action_status.config(text="ERROR: faster_whisper not available", anchor="center")
         model_loading = False
         model_load_lock.release()
+        if not recording_in_progress:
+            set_record_ready()
         return
     
     print(f"=== STARTING MODEL LOAD: {current_model_name} ===")
@@ -478,6 +479,8 @@ def initialize_model():
             action_status.config(text="GPU ERROR - Check text area for details", anchor="center")
             model_loading = False
             model_load_lock.release()
+            if not recording_in_progress:
+                set_record_ready()
             return
         
         try:
@@ -496,6 +499,8 @@ def initialize_model():
                 transcript_text.delete("1.0", 'end')
             model_loading = False
             model_load_lock.release()
+            if not recording_in_progress:
+                set_record_ready()
             return
             
         except Exception as e:
@@ -551,6 +556,8 @@ def initialize_model():
         finally:
             model_loading = False
             model_load_lock.release()
+            if not recording_in_progress:
+                set_record_ready()
 
 # Language toggle - now cycles through DE-DE, DE-CH, EN
 def toggle_language():
@@ -603,6 +610,20 @@ def update_quality_button_state():
         quality_button.config(state="normal")
     quality_button.config(text=cpu_quality_preset)
 
+def set_record_tooltip_text(text):
+    try:
+        if record_tooltip:
+            record_tooltip.set_text(text)
+    except Exception:
+        pass
+
+def set_record_ready():
+    record_button.config(text="RECORD", bootstyle="warning", state="normal")
+    set_record_tooltip_text("Aufnahme beginnen")
+
+def set_record_disabled():
+    record_button.config(text="RECORD", bootstyle="secondary", state="disabled")
+
 def cycle_quality_preset():
     global cpu_quality_preset
     presets = ["HI", "MED", "LO"]
@@ -616,12 +637,14 @@ def cycle_quality_preset():
 
 # Recording
 def toggle_recording():
-    global recording_in_progress, audio_file_path
+    global recording_in_progress, audio_file_path, recording_source, active_window_id
 
     if recording_in_progress:
-        stop_ffmpeg_recording()
+        debug_log(f"toggle_recording stop source={recording_source}")
+        stop_audio_capture()
         recording_in_progress = False
         record_button.config(text="TRANSCRIBING", bootstyle="secondary", state="disabled")
+        set_record_tooltip_text("Aufnahme beginnen")
         action_status.config(text="TRANSCRIPTION RUNNING...", anchor="center")
 
         # CRITICAL FIX: Only call app.update() if window is visible (not withdrawn)
@@ -637,7 +660,7 @@ def toggle_recording():
 
         if not audio_file_path or not os.path.exists(audio_file_path):
             action_status.config(text="RECORD ERROR: audio file missing", anchor="center")
-            record_button.config(text="RECORD", bootstyle="warning", state="normal")
+            set_record_ready()
             return
 
         try:
@@ -647,7 +670,7 @@ def toggle_recording():
 
         if size_bytes < 1024:
             action_status.config(text="RECORD ERROR: audio file too small", anchor="center")
-            record_button.config(text="RECORD", bootstyle="warning", state="normal")
+            set_record_ready()
             return
 
         # MEMORY FIX: Use managed thread
@@ -658,21 +681,29 @@ def toggle_recording():
             start_managed_thread(target=initialize_model, name="InitializeModel")
             return
 
-        audio_file_path, _ = get_output_paths("temp")
+        # Button-started recording should never auto-paste into external windows.
+        if recording_source != "hotkey":
+            recording_source = "button"
+            active_window_id = None
+            debug_log("toggle_recording start source=button")
+        else:
+            debug_log("toggle_recording start source=hotkey")
+        audio_file_path, _ = get_output_paths_with_ext("temp", "wav")
 
         try:
-            ffmpeg_log_path = start_ffmpeg_recording(audio_file_path)
+            start_audio_capture(audio_file_path)
         except Exception as e:
             action_status.config(text=f"RECORD ERROR: {e}", anchor="center")
             return
 
         recording_in_progress = True
         record_button.config(text="STOP", bootstyle="danger", state="normal")
+        set_record_tooltip_text("Aufnahme beenden")
         action_status.config(text="RECORDING...", anchor="center")
 
 # Transcription - just added Swiss German processing
 def transcribe_audio(audio_file_path):
-    global model, active_window_id
+    global model, active_window_id, recording_source
 
     if model is None:
         initialize_model()
@@ -687,6 +718,7 @@ def transcribe_audio(audio_file_path):
 
     try:
         # Transcribe with anti-hallucination parameter
+        t0 = time.perf_counter()
         if use_gpu:
             beam_size = 5
         else:
@@ -704,16 +736,13 @@ def transcribe_audio(audio_file_path):
         )
         # Convert to list and process, then explicitly free memory
         segment_list = list(segments)
+        t1 = time.perf_counter()
 
         if not segment_list:
             transcription = "(No speech detected)"
         else:
             transcription = ''.join(segment.text for segment in segment_list).strip()
 
-        # MEMORY FIX: Explicitly free segment list after transcription is complete
-        segment_list = None
-        del segments
-        
         # Apply Swiss German conversion if needed
         transcription = swiss_german_convert(transcription)
 
@@ -721,6 +750,10 @@ def transcribe_audio(audio_file_path):
         transcription = transcription + " "
 
         print(f"Transcription completed. Length: {len(transcription)} characters")
+
+        # MEMORY FIX: Explicitly free segment list after transcription is complete
+        segment_list = None
+        del segments
         
         # Save transcript
         _, transcript_file_path = get_output_paths(transcription)
@@ -733,8 +766,19 @@ def transcribe_audio(audio_file_path):
         app.after(0, lambda: pyperclip.copy(transcription))
 
         # AUTO-PASTE if enabled and we have a target window
-        if config.get("auto_paste", True) and active_window_id:
-            import time
+        if recording_source == "hotkey":
+            def _maybe_show_in_window():
+                try:
+                    if app.state() != 'withdrawn':
+                        transcript_text.insert('end', transcription + "\n")
+                        refresh_transcript_list(select_latest=True)
+                        beep()
+                except Exception:
+                    pass
+            app.after(0, _maybe_show_in_window)
+
+        if recording_source == "hotkey":
+            debug_log(f"auto_paste attempt active_window_id={active_window_id}")
             t_start = time.time()
             print(f"\n{'='*60}")
             print(f"📋 [{time.time():.3f}] AUTO-PASTE START")
@@ -752,7 +796,10 @@ def transcribe_audio(audio_file_path):
                 paste_method = config.get("paste_method", "clipboard")
                 print(f"📌 [{time.time():.3f}] Calling paste function: {paste_method}")
 
+                fg_hwnd = get_active_window_id()
+                debug_log(f"auto_paste before foreground_hwnd={fg_hwnd} target_hwnd={active_window_id}")
                 paste_success = paste_text_clipboard(transcription, active_window_id)
+                debug_log(f"auto_paste result success={paste_success}")
 
                 t_paste_end = time.time()
                 paste_duration = t_paste_end - t_paste_start
@@ -820,7 +867,9 @@ def transcribe_audio(audio_file_path):
         app.after(0, lambda msg=err_msg: action_status.config(text=f"TRANSCRIPTION ERROR: {msg}", anchor="center"))
     
     finally:
-        app.after(0, lambda: record_button.config(text="RECORD", bootstyle="warning", state="normal"))
+        app.after(0, set_record_ready)
+        if recording_source == "hotkey":
+            recording_source = "button"
 
 def copy_to_clipboard():
     full_text = transcript_text.get("1.0", 'end').strip()
@@ -854,18 +903,25 @@ def show_window_fallback(transcription):
 
 def on_hotkey_press():
     """Called when hotkey pressed - start recording"""
-    global active_window_id, recording_in_progress
+    global active_window_id, recording_in_progress, recording_source, last_external_window_id
 
     print("\n" + "="*50)
     print("🔴 HOTKEY PRESS DETECTED")
     print(f"   Recording in progress: {recording_in_progress}")
+    debug_log("hotkey_press")
 
     if recording_in_progress:
         print("   ⚠️ Already recording, ignoring")
         return  # Already recording
 
-    # Save currently active window ID
+    recording_source = "hotkey"
+    # Save currently active window ID (prefer non-app window)
     active_window_id = get_active_window_id()
+    debug_log(f"hotkey_press active_hwnd={active_window_id} app_hwnd={app_hwnd} last_external={last_external_window_id}")
+    if active_window_id and app_hwnd and active_window_id != app_hwnd:
+        last_external_window_id = active_window_id
+    elif last_external_window_id:
+        active_window_id = last_external_window_id
     if active_window_id:
         print(f"   📍 Saved active window: {active_window_id}")
     else:
@@ -883,11 +939,12 @@ def on_hotkey_press():
 
 def on_hotkey_release():
     """Called when hotkey released - stop recording and transcribe"""
-    global recording_in_progress
+    global recording_in_progress, active_window_id, last_external_window_id
 
     print("\n" + "="*50)
     print("⚪ HOTKEY RELEASE DETECTED")
     print(f"   Recording in progress: {recording_in_progress}")
+    debug_log("hotkey_release")
 
     if not recording_in_progress:
         print("   ⚠️ Not recording, ignoring")
@@ -898,6 +955,15 @@ def on_hotkey_release():
     if tray_icon:
         tray_icon.update_status("transcribing")
         print("   🎨 Tray icon updated to YELLOW")
+
+    # Refresh target window on release (prefer current non-app window)
+    current_hwnd = get_active_window_id()
+    debug_log(f"hotkey_release active_hwnd={current_hwnd} app_hwnd={app_hwnd} last_external={last_external_window_id}")
+    if current_hwnd and app_hwnd and current_hwnd != app_hwnd:
+        active_window_id = current_hwnd
+        last_external_window_id = current_hwnd
+    elif last_external_window_id:
+        active_window_id = last_external_window_id
 
     # Stop recording on the UI thread
     print("   🛑 Queuing toggle_recording() on UI thread...")
@@ -1099,6 +1165,10 @@ try:
     print("✅ Tk scaling set to 1.0 (manual DPI scaling)")
 except Exception as e:
     print(f"⚠️ Could not set Tk scaling: {e}")
+try:
+    app_hwnd = app.winfo_id()
+except Exception:
+    app_hwnd = None
 
 # ================================
 # Font Configuration for Windows
@@ -1183,6 +1253,71 @@ print(f"🖼️  Window geometry: {scaled_width}x{scaled_height}+{scaled_x}+{sca
 app.attributes('-topmost', True)  # Keep window always on top
 print("✅ Window class set to 'dictate' via tk.Tk(className=...)")
 
+class SimpleTooltip:
+    def __init__(self, widget, text, delay_ms=400):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self.tip = None
+        self._after_id = None
+        widget.bind("<Enter>", self._schedule_show)
+        widget.bind("<Leave>", self._hide)
+        widget.bind("<ButtonPress>", self._hide)
+
+    def set_text(self, text):
+        self.text = text
+
+    def _schedule_show(self, _event=None):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+        self._after_id = self.widget.after(self.delay_ms, self._show)
+
+    def _show(self):
+        if self.tip or not self.text:
+            return
+        try:
+            x, y = self.widget.winfo_pointerxy()
+            x = x + 10
+            y = y - 28
+        except Exception:
+            x = self.widget.winfo_rootx() + 8
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        try:
+            self.tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tooltip_font_size = max(9, int(scaled_font_size * 0.9))
+        label = tk.Label(
+            self.tip,
+            text=self.text,
+            bg="#1b1b1b",
+            fg="#ffffff",
+            padx=6,
+            pady=3,
+            font=(SYSTEM_FONT_SANS, tooltip_font_size)
+        )
+        label.pack()
+        self.tip.wm_geometry(f"+{x}+{y}")
+
+    def _hide(self, _event=None):
+        if self._after_id:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        if self.tip:
+            try:
+                self.tip.destroy()
+            except Exception:
+                pass
+            self.tip = None
+
+def _attach_tooltip(widget, text):
+    return SimpleTooltip(widget, text=text)
+
 def force_window_visible():
     """Ensure the window is visible and positioned on-screen."""
     try:
@@ -1218,6 +1353,8 @@ try:
         app.iconphoto(True, *icons)
     if os.path.exists(icon_ico):
         app.iconbitmap(icon_ico)
+        app.update_idletasks()
+        _set_window_icons(app.winfo_id(), icon_ico)
     if icons or os.path.exists(icon_ico):
         print("✅ Application icon loaded")
     else:
@@ -1250,8 +1387,21 @@ def on_closing():
         except Exception as e:
             print(f"⚠️ Error stopping tray icon: {e}")
 
-    # Kill any running ffmpeg processes
-    stop_ffmpeg_recording()
+    # Kill any running recording processes
+    stop_audio_capture()
+
+    # Clean up temporary audio files
+    try:
+        audio_dir = os.path.expanduser("~/Music/dictate")
+        for ext in ("*.wav", "*.mp3"):
+            for path in glob.glob(os.path.join(audio_dir, ext)):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        print("✅ Temporary audio files cleaned")
+    except Exception:
+        pass
 
     # Clean up the Whisper model and free GPU memory
     if model is not None:
@@ -1282,15 +1432,87 @@ def on_closing():
 
 def on_window_close():
     """Window X button → hide to tray (don't quit)"""
-    if config.get("start_minimized", True):
-        # If we're using tray mode, hide window instead of quitting
+    try:
+        dialog = tk.Toplevel(app)
+        dialog.title("Dictate")
+        dialog.resizable(False, False)
+        dialog.transient(app)
+        dialog.grab_set()
+
+        label = tk.Label(dialog, text="Was moechten Sie tun?")
+        label.pack(padx=16, pady=(14, 10))
+
+        def _do_cancel():
+            dialog.destroy()
+
+        def _do_minimize():
+            dialog.destroy()
+            app.withdraw()
+            if tray_icon:
+                tray_icon.update_status("idle")
+            print("🔕 Window hidden to tray")
+
+        def _do_close():
+            dialog.destroy()
+            on_closing()
+            try:
+                if tray_icon:
+                    tray_icon.stop()
+            except Exception:
+                pass
+            try:
+                app.quit()
+            except Exception:
+                pass
+            try:
+                app.destroy()
+            except Exception:
+                pass
+
+        btn_close = tb.Button(dialog, text="Schliessen", width=14, bootstyle="danger", command=_do_close)
+        btn_close.pack(padx=16, pady=(0, 6), fill="x")
+
+        btn_min = tb.Button(dialog, text="Minimieren", width=14, bootstyle="warning", command=_do_minimize)
+        btn_min.pack(padx=16, pady=(0, 6), fill="x")
+
+        btn_cancel = tb.Button(dialog, text="Abbrechen", width=14, bootstyle="secondary", command=_do_cancel)
+        btn_cancel.pack(padx=16, pady=(0, 14), fill="x")
+
+        dialog.protocol("WM_DELETE_WINDOW", _do_cancel)
+        btn_min.focus_set()
+
+        def _place_dialog():
+            app.update_idletasks()
+            dialog.update_idletasks()
+            try:
+                tx = transcript_text.winfo_rootx()
+                ty = transcript_text.winfo_rooty()
+                x = tx + 10
+                y = ty + 10
+            except Exception:
+                ax = app.winfo_rootx()
+                ay = app.winfo_rooty()
+                aw = app.winfo_width()
+                ah = app.winfo_height()
+                dw = dialog.winfo_width()
+                dh = dialog.winfo_height()
+                x = ax + max(0, (aw - dw) // 2)
+                y = ay + max(0, (ah - dh) // 6)
+            sw = app.winfo_screenwidth()
+            sh = app.winfo_screenheight()
+            dw = dialog.winfo_width()
+            dh = dialog.winfo_height()
+            x = max(0, min(x, sw - dw))
+            y = max(0, min(y, sh - dh))
+            dialog.geometry(f"+{x}+{y}")
+
+        _place_dialog()
+    except Exception:
+        # Fallback: minimize on failure
         app.withdraw()
         if tray_icon:
             tray_icon.update_status("idle")
         print("🔕 Window hidden to tray")
-    else:
-        # If not using tray mode, quit normally
-        on_closing()
 
 app.protocol("WM_DELETE_WINDOW", on_window_close)
 
@@ -1301,10 +1523,12 @@ top_button_frame.pack(pady=(10, 5))
 record_button = tb.Button(top_button_frame, text="RECORD", bootstyle="warning", width=10,
                         command=toggle_recording)
 record_button.pack(side="left", padx=1)
+record_tooltip = _attach_tooltip(record_button, "Aufnahme beginnen")
 
 language_button = tb.Button(top_button_frame, text=current_language, bootstyle="info", width=6,
                            command=toggle_language)
 language_button.pack(side="left", padx=1)
+_attach_tooltip(language_button, "Diktiersprache auswaehlen")
 
 # Control buttons frame
 button_frame = tb.Frame(app, borderwidth=0, relief="flat")
@@ -1312,19 +1536,23 @@ button_frame.pack(pady=5)
 
 wipe_button = tb.Button(button_frame, text="WIPE", bootstyle="danger", width=4, command=clear_window)
 wipe_button.pack(side="left", padx=1)
+_attach_tooltip(wipe_button, "Transkriptionsfenster loeschen")
 
 clipboard_button = tb.Button(button_frame, text="CLIP", bootstyle="success", width=4, command=copy_to_clipboard)
 clipboard_button.pack(side="left", padx=1)
+_attach_tooltip(clipboard_button, "Fensterinhalt kopieren")
 
 # Model name abbreviations for compact display
 model_abbrev = {"base": "BASE", "small": "SML", "large-v3-turbo": "V3T"}
 model_button = tb.Button(button_frame, text=model_abbrev.get(current_model_name, current_model_name.upper()[:4]),
                          bootstyle="secondary", width=4, command=cycle_model)
 model_button.pack(side="left", padx=1)
+_attach_tooltip(model_button, "Modell auswaehlen")
 
 quality_button = tb.Button(button_frame, text=cpu_quality_preset, bootstyle="secondary", width=4,
                           command=cycle_quality_preset)
 quality_button.pack(side="left", padx=1)
+_attach_tooltip(quality_button, "Qualitaet auswaehlen")
 
 # Status display (no bootstyle to avoid white background)
 action_status = tb.Label(app, text="APP READY", anchor="center")

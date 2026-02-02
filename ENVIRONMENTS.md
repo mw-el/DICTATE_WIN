@@ -11,10 +11,12 @@ This project provides Windows-only environment configurations for GPU and CPU se
 ### 2. `environment-win-cpu.yml` (Windows + CPU)
 - For systems without NVIDIA GPU
 - CPU-only PyTorch
+ - Includes WASAPI capture via `sounddevice`/`soundfile`
 
 ### 3. `environment.yml` (Windows CPU default)
 - Same as `environment-win-cpu.yml`
 - Kept for convenience
+ - Includes WASAPI capture via `sounddevice`/`soundfile`
 
 ## Automatic Detection
 
