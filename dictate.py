@@ -1295,8 +1295,8 @@ app.title("Dictate")
 
 # Scale window geometry based on widget_scale (NOT font_scale!)
 # Original: 200x1080+1720+0
-# Width set to 220 - narrow but "Dictate" still readable
-base_width = 220
+# Width set to 210 - narrow but "Dictate" still readable
+base_width = 210
 base_height = 1080
 screen_w = app.winfo_screenwidth()
 screen_h = app.winfo_screenheight()
