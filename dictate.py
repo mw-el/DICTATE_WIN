@@ -27,6 +27,26 @@ import sys
 import traceback
 import glob  # NEW: for transcript file discovery
 
+# Ensure UTF-8 output to avoid UnicodeEncodeError on Windows consoles
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+def _startup_log(msg):
+    try:
+        from datetime import datetime as _dt
+        log_dir = os.path.expanduser("~/Music/dictate/logs")
+        os.makedirs(log_dir, exist_ok=True)
+        ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with open(os.path.join(log_dir, "startup.log"), "a", encoding="utf-8") as f:
+            f.write(f"{ts} {msg}\n")
+    except Exception:
+        pass
+
 # Single-instance guard (Windows)
 try:
     import win32event
@@ -87,10 +107,33 @@ sys.excepthook = global_exception_handler
 
 # Prevent multiple running instances (avoids duplicate tray icons/taskbar entries)
 if HAS_SINGLE_INSTANCE:
-    _mutex = win32event.CreateMutex(None, False, "Global\\DictateSingleton")
-    if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
-        messagebox.showinfo("Dictate", "Dictate is already running.")
-        sys.exit(0)
+    try:
+        _mutex_name = f"Local\\DictateSingleton_{os.getlogin()}"
+    except Exception:
+        _mutex_name = "Local\\DictateSingleton"
+    _mutex = win32event.CreateMutex(None, False, _mutex_name)
+    _last_err = win32api.GetLastError()
+    _startup_log(f"mutex name={_mutex_name} last_error={_last_err}")
+    if _last_err == winerror.ERROR_ALREADY_EXISTS:
+        # Try to bring existing window to front; if not found, continue startup.
+        brought = False
+        try:
+            user32 = ctypes.windll.user32
+            user32.FindWindowW.restype = ctypes.c_void_p
+            hwnd = user32.FindWindowW("dictate", None)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+                brought = True
+        except Exception:
+            pass
+        _startup_log(f"mutex already exists brought={brought}")
+        if brought:
+            try:
+                messagebox.showinfo("Dictate", "Dictate is already running.")
+            except Exception:
+                pass
+            sys.exit(0)
 
 # Windows taskbar grouping/icon
 def set_windows_app_id(app_id):
@@ -1243,7 +1286,9 @@ if base_height > screen_h:
     base_height = screen_h
 
 scaled_width = min(int(base_width * widget_scale), screen_w)
-scaled_height = min(int(base_height * widget_scale), screen_h)
+taskbar_margin = 40
+max_height = max(200, screen_h - taskbar_margin)
+scaled_height = min(int(base_height * widget_scale), max_height)
 scaled_x = max(0, screen_w - scaled_width)
 scaled_y = max(0, min(base_y, screen_h - scaled_height))
 

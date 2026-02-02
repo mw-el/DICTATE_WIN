@@ -77,6 +77,7 @@ Note: The installer will attempt to accept the Conda Terms of Service for the de
 ```
 
 Note: Audio is captured via WASAPI (sounddevice). Recordings are saved as `.wav`.
+To avoid the brief PowerShell window flash, use the Start Menu shortcut (it targets `pythonw.exe` directly).
 
 ---
 

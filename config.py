@@ -39,7 +39,7 @@ def load_config():
         # First run - create config directory and file with defaults
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         save_config(DEFAULT_CONFIG)
-        print(f"✅ Created default config: {CONFIG_PATH}")
+        print(f"Created default config: {CONFIG_PATH}")
         return DEFAULT_CONFIG.copy()
 
     try:
@@ -50,14 +50,14 @@ def load_config():
         config = DEFAULT_CONFIG.copy()
         config.update(user_config)
 
-        print(f"✅ Loaded config from: {CONFIG_PATH}")
+        print(f"Loaded config from: {CONFIG_PATH}")
         return config
 
     except json.JSONDecodeError as e:
-        print(f"⚠️ Config file corrupt, using defaults: {e}")
+        print(f"Config file corrupt, using defaults: {e}")
         return DEFAULT_CONFIG.copy()
     except Exception as e:
-        print(f"⚠️ Error loading config, using defaults: {e}")
+        print(f"Error loading config, using defaults: {e}")
         return DEFAULT_CONFIG.copy()
 
 
@@ -74,10 +74,10 @@ def save_config(config):
         with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
 
-        print(f"✅ Config saved to: {CONFIG_PATH}")
+        print(f"Config saved to: {CONFIG_PATH}")
 
     except Exception as e:
-        print(f"⚠️ Error saving config: {e}")
+        print(f"Error saving config: {e}")
 
 
 def get_config_value(config, key, default=None):

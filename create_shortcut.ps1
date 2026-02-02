@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -6,17 +6,44 @@ $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 $shortcutPath = Join-Path $startMenuDir "Dictate.lnk"
 $iconPath = Join-Path $scriptDir "dictate.ico"
 $startScript = Join-Path $scriptDir "start_dictate.ps1"
+$launchPy = Join-Path $scriptDir "launch.py"
 
 if (-not (Test-Path $startScript)) {
     throw "start_dictate.ps1 not found in $scriptDir"
+}
+if (-not (Test-Path $launchPy)) {
+    throw "launch.py not found in $scriptDir"
+}
+
+# Resolve conda env python executables (pythonw for shortcut, python for AppUserModelID).
+$minicondaDir = Join-Path $env:USERPROFILE "miniconda3"
+$anacondaDir = Join-Path $env:USERPROFILE "anaconda3"
+
+$condaBase = $minicondaDir
+if (-not (Test-Path (Join-Path $minicondaDir "Scripts\\conda.exe"))) {
+    if (Test-Path (Join-Path $anacondaDir "Scripts\\conda.exe")) {
+        $condaBase = $anacondaDir
+    }
+}
+
+$envRoot = Join-Path $condaBase "envs\\fasterwhisper"
+$pythonwExe = Join-Path $envRoot "pythonw.exe"
+$pythonExe = Join-Path $envRoot "python.exe"
+
+if (-not (Test-Path $pythonwExe)) {
+    throw "pythonw.exe not found in conda env. Run install.ps1 first."
+}
+if (-not (Test-Path $pythonExe)) {
+    throw "python.exe not found in conda env. Run install.ps1 first."
 }
 
 # Create shortcut using WScript.Shell COM object
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-$shortcut.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScript`""
+$shortcut.TargetPath = $pythonwExe
+$shortcut.Arguments = "`"$launchPy`""
 $shortcut.WorkingDirectory = $scriptDir
+$shortcut.WindowStyle = 7
 if (Test-Path $iconPath) {
     $shortcut.IconLocation = "$iconPath,0"
 }
@@ -26,19 +53,6 @@ Write-Host "Shortcut created: $shortcutPath"
 
 # Set AppUserModelID for correct taskbar grouping
 # This requires pywin32 from the conda environment
-$minicondaDir = Join-Path $env:USERPROFILE "miniconda3"
-$anacondaDir = Join-Path $env:USERPROFILE "anaconda3"
-
-$condaBase = $minicondaDir
-if (-not (Test-Path (Join-Path $minicondaDir "Scripts\conda.exe"))) {
-    if (Test-Path (Join-Path $anacondaDir "Scripts\conda.exe")) {
-        $condaBase = $anacondaDir
-    }
-}
-
-$envRoot = Join-Path $condaBase "envs\fasterwhisper"
-$pythonExe = Join-Path $envRoot "python.exe"
-
 if (Test-Path $pythonExe) {
     $env:DICTATE_SHORTCUT = $shortcutPath
     $env:DICTATE_APPID = "Dictate"

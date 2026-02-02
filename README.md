@@ -52,6 +52,7 @@ python -c "import faster_whisper; import ttkbootstrap; print('Ready!')"
 Transcripts are saved in `~/Music/dictate/`.
 If `./models/` exists, Dictate will load models from there first.
 Audio capture uses WASAPI via `sounddevice` (low latency) and recordings are saved as `.wav`.
+If you want to avoid the brief PowerShell window flash, launch via the Start Menu shortcut (it targets `pythonw.exe` directly).
 
 ## Troubleshooting
 
