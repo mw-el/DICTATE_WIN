@@ -1425,6 +1425,10 @@ try:
                     pass
 
         if photo_images:
+            # CRITICAL: Store reference to prevent garbage collection!
+            # Without this, Python GC deletes PhotoImage objects and icons become blurry
+            app._icon_images = photo_images
+
             # Use wm iconphoto - this is DPI-aware!
             app.iconphoto(True, *photo_images)
             print(f"✅ Loaded {len(photo_images)} DPI-aware icon sizes")
@@ -1515,31 +1519,21 @@ def on_window_close():
         dialog.transient(app)
         dialog.grab_set()
 
-        # Set dialog icon (same as main window) - use DPI-aware PNG icons
+        # Set dialog icon - reuse main window's icon for consistency
         try:
-            icon_pngs_dir = os.path.join(os.path.dirname(__file__), "icon_pngs")
-            if os.path.exists(icon_pngs_dir):
-                icon_sizes = [256, 128, 64, 48, 40, 32, 28, 24, 20, 16]
-                photo_images = []
-                for size in icon_sizes:
-                    png_path = os.path.join(icon_pngs_dir, f"dictate_{size}.png")
-                    if os.path.exists(png_path):
-                        try:
-                            photo = tk.PhotoImage(file=png_path)
-                            photo_images.append(photo)
-                        except Exception:
-                            pass
-                if photo_images:
-                    dialog.iconphoto(True, *photo_images)
+            if hasattr(app, '_icon_images') and app._icon_images:
+                # Reuse the already-loaded PNG icons from main window
+                dialog._icon_images = app._icon_images
+                dialog.iconphoto(True, *app._icon_images)
             else:
-                # Fallback to ICO
+                # Fallback to ICO if PNGs not available
                 icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
                 if os.path.exists(icon_ico):
                     dialog.iconbitmap(icon_ico)
                     dialog.update_idletasks()
                     _set_window_icons(dialog.winfo_id(), icon_ico)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Dialog icon warning: {e}")
 
         label = tk.Label(dialog, text="Was moechten Sie tun?")
         label.pack(padx=16, pady=(14, 10))
