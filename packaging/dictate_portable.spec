@@ -41,6 +41,7 @@ for _pkg in [
     "sounddevice",
     "soundfile",
     "ttkbootstrap",
+    "tkinter_unblur",
     "pyperclip",
     "pynput",
     "pystray",
