@@ -71,13 +71,16 @@ from hotkey_manager import HotkeyManager
 from window_manager import get_active_window_id, paste_text_clipboard
 from tray_icon import TrayIcon
 
+WHISPER_IMPORT_ERROR = None
 # Try importing faster_whisper and torch
 try:
     from faster_whisper import WhisperModel
     HAS_WHISPER = True
-except ImportError:
+except Exception as e:
     HAS_WHISPER = False
-    print("Warning: faster_whisper module not found. Please make sure you are in the right Conda environment.")
+    import traceback as _tb
+    WHISPER_IMPORT_ERROR = _tb.format_exc()
+    print(f"Warning: faster_whisper import failed: {e}")
 
 try:
     import torch
@@ -651,9 +654,26 @@ def initialize_model():
         pass
     
     if not HAS_WHISPER:
-        error_msg = "faster_whisper module not found"
-        display_error_in_text_area("WHISPER NOT AVAILABLE", error_msg, 
-                                 ["Make sure you're in the 'fasterwhisper' conda environment"])
+        error_msg = "faster_whisper import failed"
+        hints = []
+        if getattr(sys, "frozen", False):
+            hints.append("Portable build missing dependencies or runtime DLLs.")
+        else:
+            hints.append("Make sure you're in the 'fasterwhisper' conda environment.")
+        if WHISPER_IMPORT_ERROR:
+            hints.append("Details: see whisper_error.log")
+            try:
+                from portable_paths import app_dir as _app_dir
+                _log_path = os.path.join(_app_dir(), "whisper_error.log")
+                with open(_log_path, "w", encoding="utf-8") as _f:
+                    _f.write(WHISPER_IMPORT_ERROR)
+                    _f.write("\n")
+                    _f.write("sys.path:\n")
+                    for _p in sys.path:
+                        _f.write(f"  {_p}\n")
+            except Exception:
+                pass
+        display_error_in_text_area("WHISPER NOT AVAILABLE", error_msg, hints)
         action_status.config(text="ERROR: faster_whisper not available", anchor="center")
         model_loading = False
         model_load_lock.release()
@@ -1378,7 +1398,18 @@ app = tk.Tk(className='dictate')
 
 # Apply tkinter-unblur for sharp rendering on high-DPI displays
 try:
-    tkinter_unblur.make_window_clear(app)
+    _applied_unblur = False
+    if hasattr(tkinter_unblur, "make_window_clear"):
+        tkinter_unblur.make_window_clear(app)
+        _applied_unblur = True
+    elif hasattr(tkinter_unblur, "apply"):
+        tkinter_unblur.apply(app)
+        _applied_unblur = True
+    elif hasattr(tkinter_unblur, "enable"):
+        tkinter_unblur.enable(app)
+        _applied_unblur = True
+    if not _applied_unblur:
+        raise AttributeError("tkinter_unblur API not found")
     print("✅ tkinter-unblur applied for high-DPI clarity")
 except Exception as e:
     print(f"⚠️ Could not apply tkinter-unblur: {e}")
@@ -1628,8 +1659,10 @@ def set_icon_via_tcl():
         # Load ONE LARGE high-resolution icon for sharp window display
         # Taskbar icon needs separate solution (Windows limitation with Tkinter)
         source_files = [
+            app_path('dictate.ico'),
             app_path('dictate-transp.png'),
-            app_path('dictate-bw.png')
+            app_path('dictate-bw.png'),
+            app_path('assets', 'icons', 'dictate_green.png'),
         ]
 
         icon_images = []

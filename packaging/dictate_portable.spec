@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
 import sys
 from glob import glob
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, conda_support
 from PyInstaller.building.datastruct import Tree
 
 block_cipher = None
 
 ROOT = Path.cwd()
 ENTRY = ROOT / "launch.py"
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 datas = []
 binaries = []
@@ -33,6 +35,7 @@ def _try_merge(pkg: str) -> None:
 
 # Core deps (large, but most robust for a “runs everywhere” portable build)
 for _pkg in [
+    "numpy",
     "torch",
     "torchaudio",
     "faster_whisper",
@@ -41,7 +44,6 @@ for _pkg in [
     "sounddevice",
     "soundfile",
     "ttkbootstrap",
-    "tkinter_unblur",
     "pyperclip",
     "pynput",
     "pystray",
@@ -49,8 +51,24 @@ for _pkg in [
     "pywin32_system32",
     "win32com",
     "pythoncom",
+    "tkinter_unblur",
 ]:
     _try_merge(_pkg)
+
+# Local modules imported by dictate.py (launch.py is the entry point)
+hiddenimports += [
+    "config",
+    "hotkey_manager",
+    "window_manager",
+    "tray_icon",
+    "portable_paths",
+    "faster_whisper",
+    "ctranslate2",
+    "torch",
+    "torchaudio",
+    "sounddevice",
+    "soundfile",
+]
 
 # Extra runtime DLLs that PyInstaller sometimes fails to resolve automatically (CUDA + audio backends).
 _env = Path(sys.prefix)
@@ -82,6 +100,44 @@ for _p in glob(str(_env / "lib" / "site-packages" / "_sounddevice_data" / "porta
 _snd = _env / "lib" / "site-packages" / "_soundfile_data" / "libsndfile_64bit.dll"
 if _snd.exists():
     binaries.append((str(_snd), "."))
+
+# Include all conda env DLLs (ensures numpy/BLAS deps are present)
+for _p in glob(str(_env / "Library" / "bin" / "*.dll")):
+    binaries.append((_p, "."))
+for _p in glob(str(_env / "bin" / "*.dll")):
+    binaries.append((_p, "."))
+for _p in glob(str(_env / "Library" / "mingw-w64" / "bin" / "*.dll")):
+    binaries.append((_p, "."))
+
+# Conda DLLs for numpy (from Library/bin)
+for _numpy_dist in ["numpy", "numpy-base"]:
+    try:
+        binaries += collect_dynamic_libs(_numpy_dist)
+    except Exception as e:
+        print(f"[spec] warning: collect_dynamic_libs failed for {_numpy_dist}: {e}")
+
+for _dist in ["numpy", "numpy-base", "mkl", "mkl-service", "mkl_fft", "mkl_random"]:
+    try:
+        binaries += conda_support.collect_dynamic_libs(_dist)
+    except Exception as e:
+        print(f"[spec] warning: conda_support.collect_dynamic_libs failed for {_dist}: {e}")
+
+# Numpy/Fortran runtime DLLs often needed for _multiarray_umath
+for _pattern in [
+    "libgfortran*.dll",
+    "libgcc_s*.dll",
+    "libstdc++*.dll",
+    "libquadmath*.dll",
+]:
+    for _p in glob(str(_env / "Library" / "bin" / _pattern)):
+        binaries.append((_p, "."))
+
+# Force-package faster_whisper and ctranslate2 if collect_all fails
+_site = _env / "lib" / "site-packages"
+for _pkg_dir in ["faster_whisper", "ctranslate2"]:
+    _p = _site / _pkg_dir
+    if _p.exists():
+        datas.append((str(_p), _pkg_dir))
 
 # App assets (side-by-side; code uses portable_paths.app_dir())
 datas += [

@@ -39,6 +39,19 @@ def main(argv=None):
     os.environ["DICTATE_APPID"] = args.appid
     base_dir = app_dir()
     os.chdir(base_dir)
+    if getattr(sys, "frozen", False):
+        internal_dir = os.path.join(base_dir, "_internal")
+        if hasattr(os, "add_dll_directory"):
+            for p in (base_dir, internal_dir):
+                try:
+                    if p and os.path.isdir(p):
+                        os.add_dll_directory(p)
+                except Exception:
+                    pass
+        os.environ["PATH"] = ";".join([internal_dir, base_dir, os.environ.get("PATH", "")])
+        for p in (base_dir, internal_dir):
+            if p and p not in sys.path and os.path.isdir(p):
+                sys.path.insert(0, p)
     if os.environ.get("DICTATE_DRYRUN") == "1":
         if getattr(sys, "frozen", False):
             print("DRYRUN: would run module 'dictate'")

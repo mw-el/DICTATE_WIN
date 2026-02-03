@@ -14,13 +14,30 @@ import sys
 def app_dir() -> str:
     """
     Returns the directory that should be treated as the app root for locating
-    side-by-side resources (assets/, icon_pngs/, models/, paste_rules.json).
+    side-by-side resources (models/, outputs, etc.).
     """
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def path(*parts: str) -> str:
-    return os.path.join(app_dir(), *parts)
+def internal_dir() -> str:
+    """
+    Returns the PyInstaller internal directory where code/data lives.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.join(app_dir(), "_internal")
+    return app_dir()
 
+
+def path(*parts: str) -> str:
+    """
+    Resolve a resource path. In frozen builds, prefer app_dir but fall back
+    to _internal if the resource doesn't exist next to the exe.
+    """
+    p = os.path.join(app_dir(), *parts)
+    if getattr(sys, "frozen", False) and not os.path.exists(p):
+        alt = os.path.join(internal_dir(), *parts)
+        if os.path.exists(alt):
+            return alt
+    return p
