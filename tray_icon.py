@@ -123,11 +123,14 @@ class TrayIcon:
 
     def quit_app(self, icon=None, item=None):
         """Quit application with full cleanup"""
+        import os
         print(f"\n{'='*50}")
         print("👋 QUIT CLICKED - Quitting from tray menu...")
         print(f"{'='*50}\n")
         self.stop()
         self.on_quit()  # Calls on_closing() which handles all cleanup
+        # Force-kill the process to prevent zombie tray icons
+        os._exit(0)
 
     def set_language(self, lang_code):
         """Change language and update menu"""
@@ -260,12 +263,10 @@ class TrayIcon:
                 import traceback
                 traceback.print_exc()
 
-        # Use NON-daemon thread so tray icon can receive events properly
-        # Daemon threads don't process events reliably in pystray
-        self.icon_thread = threading.Thread(target=run_icon, daemon=False, name="TrayIconThread")
+        # Use daemon thread so it dies with the main process (no zombie processes)
+        self.icon_thread = threading.Thread(target=run_icon, daemon=True, name="TrayIconThread")
         self.icon_thread.start()
         print(f"🔧 Icon thread started: daemon={self.icon_thread.daemon}, alive={self.icon_thread.is_alive()}, name={self.icon_thread.name}")
-        print(f"⚠️  IMPORTANT: Using non-daemon thread for proper event handling")
 
         print("✅ Tray icon started")
         print("💡 Left-click tray icon to show/hide window")
