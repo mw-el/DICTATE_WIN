@@ -237,6 +237,13 @@ def detect_gpu_availability():
         ])
         return gpu_info
 
+def _is_valid_model_dir(path: str) -> bool:
+    if not path or not os.path.isdir(path):
+        return False
+    # Minimal sanity: required files in faster-whisper model folder
+    return os.path.exists(os.path.join(path, "model.bin"))
+
+
 def resolve_model_source(model_name):
     """
     Prefer local models/ directory if present.
@@ -247,20 +254,21 @@ def resolve_model_source(model_name):
     3) ~/Music/dictate/models/<model>
     4) HuggingFace cache (by returning model_name)
     """
+    candidates = []
     env_dir = os.environ.get("DICTATE_MODELS_DIR")
     if env_dir:
-        candidate = os.path.join(env_dir, model_name)
-        if os.path.isdir(candidate):
+        candidates.append(os.path.join(env_dir, model_name))
+
+    candidates.append(app_path("models", model_name))
+    candidates.append(os.path.expanduser(os.path.join("~/Music/dictate/models", model_name)))
+
+    for candidate in candidates:
+        if _is_valid_model_dir(candidate):
             return candidate
 
-    local_dir = app_path("models", model_name)
-    if os.path.isdir(local_dir):
-        return local_dir
-
-    user_dir = os.path.expanduser(os.path.join("~/Music/dictate/models", model_name))
-    if os.path.isdir(user_dir):
-        return user_dir
-
+    print(f"⚠️ Model '{model_name}' not found locally. Checked:")
+    for c in candidates:
+        print(f"   - {c}")
     return model_name
 
 def _model_repo_id(model_name: str) -> str:
@@ -312,7 +320,7 @@ def ensure_model_available(model_name: str) -> str:
 
     # 1) Already available?
     existing = resolve_model_source(model_name)
-    if existing != model_name and os.path.isdir(existing):
+    if existing != model_name and _is_valid_model_dir(existing):
         return existing
 
     # 2) Determine target dir
@@ -326,7 +334,7 @@ def ensure_model_available(model_name: str) -> str:
     model_downloading = True
     holder = {}
     try:
-        if os.path.isdir(target_dir):
+        if _is_valid_model_dir(target_dir):
             return target_dir
 
         os.makedirs(target_dir, exist_ok=True)
@@ -1822,19 +1830,8 @@ def on_window_close():
         def _do_close():
             dialog.destroy()
             on_closing()
-            try:
-                if tray_icon:
-                    tray_icon.stop()
-            except Exception:
-                pass
-            try:
-                app.quit()
-            except Exception:
-                pass
-            try:
-                app.destroy()
-            except Exception:
-                pass
+            # Force-kill the process to prevent zombie tray icons
+            os._exit(0)
 
         btn_close = tb.Button(dialog, text="Schliessen", width=14, bootstyle="danger", command=_do_close)
         btn_close.pack(padx=16, pady=(0, 6), fill="x")

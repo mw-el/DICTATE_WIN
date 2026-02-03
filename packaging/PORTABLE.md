@@ -13,8 +13,8 @@ Ziel: `Dictate.exe` als portable Ordner-App (ZIP) ohne Conda/Installer auf Zielm
 ## Voraussetzungen (Build-Maschine)
 
 - Windows 10/11
-- Python 3.10 (oder das Repo-Condas env)
-- GPU-Build empfohlen: `environment-win-gpu.yml` (enthält CUDA Runtime)
+- Python 3.10 (oder das Repo-Conda env)
+- GPU-Build empfohlen: `environment-win-gpu.yml` (enthaelt CUDA Runtime)
 - Modelle vorher herunterladen: `download_models.ps1`
 
 ## Schritte (empfohlen: GPU-Build + Modelle im Paket)
@@ -54,7 +54,7 @@ Ergebnis: `release/DictatePortable_<version>_win64.zip`
 
 1. Auf einem frischen Windows 10/11 (ohne Conda/Python) `DictatePortable_*.zip` entpacken.
 2. `Dictate/Dictate.exe` starten.
-3. Tray-Icon erscheint, Window lässt sich anzeigen/ausblenden.
-4. GPU-Fall: in der Konsole/Logs muss GPU als verfügbar erkannt werden (und `use_gpu=True`).
-5. CPU-Fall: App startet trotzdem, wählt automatisch CPU-Fallback (langsamer).
-6. Modell-Fund: `Dictate/models/<model>` oder `~/Music/dictate/models/<model>` wird verwendet (kein Online-Download nötig).
+3. Tray-Icon erscheint, Window laesst sich anzeigen/ausblenden.
+4. GPU-Fall: in der Konsole/Logs muss GPU als verfuegbar erkannt werden (und `use_gpu=True`).
+5. CPU-Fall: App startet trotzdem, waehlt automatisch CPU-Fallback (langsamer).
+6. Modell-Fund: `Dictate/models/<model>` oder `~/Music/dictate/models/<model>` wird verwendet (kein Online-Download noetig).
