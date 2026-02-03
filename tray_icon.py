@@ -8,6 +8,8 @@ import pystray
 from PIL import Image, ImageDraw
 import threading
 
+from portable_paths import path as app_path
+
 
 class TrayIcon:
     """
@@ -57,10 +59,7 @@ class TrayIcon:
         import os
 
         # Load pre-generated PNG file
-        icon_path = os.path.join(
-            os.path.dirname(__file__),
-            "assets", "icons", f"dictate_{color}.png"
-        )
+        icon_path = app_path("assets", "icons", f"dictate_{color}.png")
 
         try:
             if os.path.exists(icon_path):

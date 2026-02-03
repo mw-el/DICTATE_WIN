@@ -19,6 +19,7 @@ from ttkbootstrap.constants import *
 from tkinter import Text, messagebox
 import tkinter as tk
 import tkinter.font as tkfont
+import tkinter_unblur  # For sharp icons on high-DPI displays
 import pyperclip
 import time
 from datetime import datetime
@@ -27,12 +28,20 @@ import sys
 import traceback
 import glob  # NEW: for transcript file discovery
 
+from portable_paths import app_dir as _app_dir
+from portable_paths import path as app_path
+
 # Ensure UTF-8 output to avoid UnicodeEncodeError on Windows consoles
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+try:
+    os.chdir(_app_dir())
 except Exception:
     pass
 
@@ -143,18 +152,24 @@ def set_windows_app_id(app_id):
         pass
 
 def enable_windows_dpi_awareness():
-    """Enable DPI awareness to avoid blurry rendering on Windows."""
+    """Enable DPI awareness using ttkbootstrap's built-in function."""
     try:
-        shcore = ctypes.windll.shcore
-        PROCESS_PER_MONITOR_DPI_AWARE = 2
-        shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)
+        # Use ttkbootstrap's enable_high_dpi_awareness() which uses Level 1
+        # This is better for Tkinter than manual Level 2 SetProcessDpiAwareness
+        from ttkbootstrap.utility import enable_high_dpi_awareness
+        enable_high_dpi_awareness()
         return True
-    except Exception:
+    except Exception as e:
+        # Fallback to manual Level 1 (not Level 2 which causes icon blur)
         try:
-            ctypes.windll.user32.SetProcessDPIAware()
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # Level 1, not 2
             return True
         except Exception:
-            return False
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+                return True
+            except Exception:
+                return False
 
 # Environment check - just warn, don't try to activate
 if 'CONDA_DEFAULT_ENV' not in os.environ:
@@ -220,11 +235,147 @@ def detect_gpu_availability():
         return gpu_info
 
 def resolve_model_source(model_name):
-    """Prefer local models/ directory if present."""
-    local_dir = os.path.join(os.path.dirname(__file__), "models", model_name)
+    """
+    Prefer local models/ directory if present.
+
+    Search order:
+    1) DICTATE_MODELS_DIR (if set)
+    2) <app_dir>/models/<model>
+    3) ~/Music/dictate/models/<model>
+    4) HuggingFace cache (by returning model_name)
+    """
+    env_dir = os.environ.get("DICTATE_MODELS_DIR")
+    if env_dir:
+        candidate = os.path.join(env_dir, model_name)
+        if os.path.isdir(candidate):
+            return candidate
+
+    local_dir = app_path("models", model_name)
     if os.path.isdir(local_dir):
         return local_dir
+
+    user_dir = os.path.expanduser(os.path.join("~/Music/dictate/models", model_name))
+    if os.path.isdir(user_dir):
+        return user_dir
+
     return model_name
+
+def _model_repo_id(model_name: str) -> str:
+    if model_name == "large-v3-turbo":
+        return "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    return model_name
+
+def _show_first_download_window():
+    """Show modal info window during first model download."""
+    done = threading.Event()
+    holder = {}
+
+    def _create():
+        try:
+            win = tk.Toplevel(app)
+            win.title("Dictate")
+            win.resizable(False, False)
+            win.transient(app)
+            win.grab_set()
+            win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+            label = tk.Label(
+                win,
+                text="Bei erstmaligem Gebrauch muessen die Transkriptionsmodelle heruntergeladen werden.\nBitte warten.",
+                padx=16,
+                pady=14
+            )
+            label.pack()
+
+            holder["win"] = win
+            done.set()
+        except Exception:
+            done.set()
+
+    try:
+        app.after(0, _create)
+    except Exception:
+        _create()
+
+    return done, holder
+
+def ensure_model_available(model_name: str) -> str:
+    """
+    Ensure model is available locally. If missing, download into models dir
+    (DICTATE_MODELS_DIR or <app>/models).
+    Returns local path (directory) or model_name as fallback.
+    """
+    global model_downloading
+
+    # 1) Already available?
+    existing = resolve_model_source(model_name)
+    if existing != model_name and os.path.isdir(existing):
+        return existing
+
+    # 2) Determine target dir
+    target_root = os.environ.get("DICTATE_MODELS_DIR") or app_path("models")
+    target_dir = os.path.join(target_root, model_name)
+
+    # 3) Avoid duplicate download
+    if not model_download_lock.acquire(blocking=False):
+        return model_name
+
+    model_downloading = True
+    holder = {}
+    try:
+        if os.path.isdir(target_dir):
+            return target_dir
+
+        os.makedirs(target_dir, exist_ok=True)
+
+        win_ready, holder = _show_first_download_window()
+        win_ready.wait(timeout=5)
+
+        try:
+            from faster_whisper.utils import download_model
+        except Exception:
+            return model_name
+
+        repo_id = _model_repo_id(model_name)
+        print(f"Downloading model: {repo_id} -> {target_dir}")
+        download_model(repo_id, output_dir=target_dir)
+        print("✅ Model download complete")
+
+        def _close():
+            try:
+                win = holder.get("win")
+                if win:
+                    win.grab_release()
+                    win.destroy()
+            except Exception:
+                pass
+
+        try:
+            app.after(0, _close)
+        except Exception:
+            _close()
+
+        if os.path.isdir(target_dir):
+            return target_dir
+        return model_name
+    except Exception as e:
+        def _close_err():
+            try:
+                win = holder.get("win")
+                if win:
+                    win.grab_release()
+                    win.destroy()
+            except Exception:
+                pass
+        try:
+            app.after(0, _close_err)
+        except Exception:
+            _close_err()
+        print(f"⚠️ Model download failed: {e}")
+        return model_name
+    finally:
+        model_downloading = False
+        model_download_lock.release()
 
 # Settings - auto-adapt to GPU availability
 gpu_info = detect_gpu_availability()
@@ -275,6 +426,8 @@ app_hwnd = None
 last_external_window_id = None
 model_load_lock = threading.Lock()
 model_loading = False
+model_download_lock = threading.Lock()
+model_downloading = False
 sd_stream = None
 sd_file = None
 
@@ -530,7 +683,7 @@ def initialize_model():
         except Exception:
             pass
 
-    model_source = resolve_model_source(current_model_name)
+    model_source = ensure_model_available(current_model_name)
 
     # Try GPU if requested
     if use_gpu:
@@ -1222,6 +1375,14 @@ print(f"? DPI detected: {detected_dpi} DPI (scale: {auto_scale:.2f}x)")
 
 set_windows_app_id(os.environ.get("DICTATE_APPID", "Dictate"))
 app = tk.Tk(className='dictate')
+
+# Apply tkinter-unblur for sharp rendering on high-DPI displays
+try:
+    tkinter_unblur.make_window_clear(app)
+    print("✅ tkinter-unblur applied for high-DPI clarity")
+except Exception as e:
+    print(f"⚠️ Could not apply tkinter-unblur: {e}")
+
 try:
     app.tk.call("tk", "scaling", 1.0)
     print("✅ Tk scaling set to 1.0 (manual DPI scaling)")
@@ -1404,43 +1565,128 @@ def force_window_visible():
 
 app.force_window_visible = force_window_visible
 
-# Set application icon (Windows). Titlebar always shows an icon; without this it falls back to a default.
-# IMPORTANT: Use PNG icons with wm iconphoto for DPI-aware rendering
-# iconbitmap() doesn't work properly with DPI-aware Tkinter apps
-try:
-    # Load multiple PNG sizes for DPI-aware icon rendering
-    icon_pngs_dir = os.path.join(os.path.dirname(__file__), "icon_pngs")
-    if os.path.exists(icon_pngs_dir):
-        # Load all PNG sizes (Tkinter will pick the best one for current DPI)
-        icon_sizes = [256, 128, 64, 48, 40, 32, 28, 24, 20, 16]  # Largest first
-        photo_images = []
+# Set window icon using direct Tcl calls (bypasses Tkinter abstraction issues)
+def _set_window_icons(hwnd, icon_path):
+    """Set window icons using Windows API directly for DPI-aware rendering."""
+    if not icon_path or not os.path.exists(icon_path):
+        return
+    try:
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
 
-        for size in icon_sizes:
-            png_path = os.path.join(icon_pngs_dir, f"dictate_{size}.png")
-            if os.path.exists(png_path):
+        # Use the actual Windows DPI-aware icon sizes to avoid scaling blur
+        SM_CXICON = 11
+        SM_CYICON = 12
+        SM_CXSMICON = 49
+        SM_CYSMICON = 50
+
+        user32 = ctypes.windll.user32
+        try:
+            cx_small = int(user32.GetSystemMetrics(SM_CXSMICON))
+            cy_small = int(user32.GetSystemMetrics(SM_CYSMICON))
+            cx_big = int(user32.GetSystemMetrics(SM_CXICON))
+            cy_big = int(user32.GetSystemMetrics(SM_CYICON))
+        except Exception:
+            cx_small, cy_small = 16, 16
+            cx_big, cy_big = 32, 32
+
+        hicon_small = user32.LoadImageW(None, icon_path, IMAGE_ICON, cx_small, cy_small, LR_LOADFROMFILE)
+        hicon_big = user32.LoadImageW(None, icon_path, IMAGE_ICON, cx_big, cy_big, LR_LOADFROMFILE)
+
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+            print(f"✅ Set SMALL icon ({cx_small}×{cy_small}) via Windows API")
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            print(f"✅ Set BIG icon ({cx_big}×{cy_big}) via Windows API")
+    except Exception as e:
+        print(f"⚠️ Could not set window icons via API: {e}")
+
+def set_icon_via_tcl():
+    """Use direct Tcl/Tk calls for maximum reliability."""
+    from PIL import Image, ImageTk
+    import os
+
+    try:
+        # Get DPI scaling factor
+        try:
+            dpi_scaling = app.tk.call('tk', 'scaling')
+            print(f"🔍 DPI scaling factor: {dpi_scaling}")
+        except:
+            dpi_scaling = 1.0
+
+        # Clear any existing icon first (prevents conflicts)
+        try:
+            app.wm_iconbitmap()  # Empty call clears icon
+            print("✅ Cleared existing icon")
+        except:
+            pass
+
+        # Load ONE LARGE high-resolution icon for sharp window display
+        # Taskbar icon needs separate solution (Windows limitation with Tkinter)
+        source_files = [
+            app_path('dictate-transp.png'),
+            app_path('dictate-bw.png')
+        ]
+
+        icon_images = []
+        for icon_path in source_files:
+            if os.path.exists(icon_path):
+                print(f"✅ Loading high-res icon: {icon_path}")
+                img = Image.open(icon_path)
+                print(f"   Size: {img.size}, Mode: {img.mode}")
+                photo = ImageTk.PhotoImage(img)
+                icon_images.append(photo)
+                print(f"✅ Loaded {img.size[0]}×{img.size[1]} icon")
+                break
+
+        if not icon_images:
+            print(f"❌ No source icon files found!")
+
+        if icon_images:
+            # Store references to prevent garbage collection
+            app._icon_images = icon_images
+
+            # FIRST: Set ICO file for Windows taskbar using Windows API
+            # This sets icons at exact Windows system metrics sizes for DPI awareness
+            ico_path = app_path('dictate.ico')
+            if os.path.exists(ico_path):
                 try:
-                    photo = tk.PhotoImage(file=png_path)
-                    photo_images.append(photo)
-                except Exception:
-                    pass
+                    # Use Windows API to set icons (ICON_SMALL for titlebar, ICON_BIG for taskbar)
+                    hwnd = app.winfo_id()
+                    _set_window_icons(hwnd, ico_path)
 
-        if photo_images:
-            # CRITICAL: Store reference to prevent garbage collection!
-            # Without this, Python GC deletes PhotoImage objects and icons become blurry
-            app._icon_images = photo_images
+                    # Also set via iconbitmap as fallback
+                    app.iconbitmap(default=ico_path)
+                    print(f"✅ Set icons via Windows API + iconbitmap")
+                except Exception as e:
+                    print(f"⚠️ Icon setup failed: {e}")
 
-            # Use wm iconphoto - this is DPI-aware!
-            app.iconphoto(True, *photo_images)
-            print(f"✅ Loaded {len(photo_images)} DPI-aware icon sizes")
-    else:
-        # Fallback to ICO if PNGs not available
-        icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
-        if os.path.exists(icon_ico):
-            app.iconbitmap(icon_ico)
-            app.update_idletasks()
-            _set_window_icons(app.winfo_id(), icon_ico)
-except Exception as e:
-    print(f"⚠️ Icon loading warning: {e}")
+            # SECOND: Set PNG for window titlebar (high-res, sharp)
+            # Use DIRECT Tcl call instead of Tkinter's iconphoto()
+            # This bypasses Tkinter abstraction and is more reliable
+            try:
+                # Call wm iconphoto directly via Tcl
+                app.tk.call('wm', 'iconphoto', app._w, *app._icon_images)
+                print(f"✅ Window icon set via direct Tcl call ({len(icon_images)} sizes)")
+            except Exception as e:
+                print(f"⚠️ Direct Tcl call failed: {e}")
+                # Fallback to standard iconphoto
+                app.iconphoto(False, *app._icon_images)
+                print(f"✅ Window icon set via iconphoto fallback")
+        else:
+            print("⚠️ No icon files found - check paths!")
+            print(f"   Working directory: {os.getcwd()}")
+    except Exception as e:
+        print(f"⚠️ Icon setup failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Use timing delay to ensure window is initialized
+app.after(201, set_icon_via_tcl)
 
 # NOTE: Font configuration already done BEFORE theme setup above
 # No additional font configuration needed here
@@ -1519,21 +1765,13 @@ def on_window_close():
         dialog.transient(app)
         dialog.grab_set()
 
-        # Set dialog icon - reuse main window's icon for consistency
+        # Set dialog icon (same DPI-scaled icons as main window)
         try:
-            if hasattr(app, '_icon_images') and app._icon_images:
-                # Reuse the already-loaded PNG icons from main window
-                dialog._icon_images = app._icon_images
-                dialog.iconphoto(True, *app._icon_images)
-            else:
-                # Fallback to ICO if PNGs not available
-                icon_ico = os.path.join(os.path.dirname(__file__), "dictate.ico")
-                if os.path.exists(icon_ico):
-                    dialog.iconbitmap(icon_ico)
-                    dialog.update_idletasks()
-                    _set_window_icons(dialog.winfo_id(), icon_ico)
-        except Exception as e:
-            print(f"⚠️ Dialog icon warning: {e}")
+            if hasattr(app, '_icon_images'):
+                # Use timing delay for dialog too (prevents icon issues)
+                dialog.after(50, lambda: dialog.iconphoto(False, *app._icon_images))
+        except Exception:
+            pass
 
         label = tk.Label(dialog, text="Was moechten Sie tun?")
         label.pack(padx=16, pady=(14, 10))
@@ -1763,4 +2001,3 @@ refresh_transcript_list(select_latest=False)
 
 if __name__ == "__main__":
     app.mainloop()
-

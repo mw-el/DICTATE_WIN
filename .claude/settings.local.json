@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(where:*)",
+      "Bash(powershell:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix icon garbage collection and optimize dialog icons\n\nChanges:\n- Store PNG icon references to prevent garbage collection \\(app._icon_images\\)\n- Dialog reuses main window icons instead of reloading\n- Adjust window width to 210px for optimal titlebar space\n- Keep DPI awareness at Per-Monitor V1 \\(V2 caused text blurriness\\)\n\nThis ensures icons stay sharp throughout app lifecycle and in dialogs.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(ie4uinit.exe:*)",
+      "Bash(dir:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:frothy-brew.readthedocs.io)",
+      "Bash(tee:*)",
+      "Bash(Start-Sleep -Seconds 6)"
+    ]
+  }
+}

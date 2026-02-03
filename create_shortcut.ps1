@@ -1,16 +1,17 @@
-﻿$ErrorActionPreference = "Stop"
+﻿param(
+    [string]$ShortcutName = "Dictate (Fresh)",
+    [string]$AppId = "Dictate.Fresh"
+)
+
+$ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-$shortcutPath = Join-Path $startMenuDir "Dictate.lnk"
+$shortcutPath = Join-Path $startMenuDir ("{0}.lnk" -f $ShortcutName)
 $iconPath = Join-Path $scriptDir "dictate.ico"
-$startScript = Join-Path $scriptDir "start_dictate.ps1"
 $launchPy = Join-Path $scriptDir "launch.py"
 
-if (-not (Test-Path $startScript)) {
-    throw "start_dictate.ps1 not found in $scriptDir"
-}
 if (-not (Test-Path $launchPy)) {
     throw "launch.py not found in $scriptDir"
 }
@@ -41,7 +42,7 @@ if (-not (Test-Path $pythonExe)) {
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $pythonwExe
-$shortcut.Arguments = "`"$launchPy`""
+$shortcut.Arguments = "`"$launchPy`" --appid `"$AppId`""
 $shortcut.WorkingDirectory = $scriptDir
 $shortcut.WindowStyle = 7
 if (Test-Path $iconPath) {
@@ -52,28 +53,23 @@ $shortcut.Save()
 Write-Host "Shortcut created: $shortcutPath"
 
 # Set AppUserModelID for correct taskbar grouping
-# This requires pywin32 from the conda environment
-if (Test-Path $pythonExe) {
-    $env:DICTATE_SHORTCUT = $shortcutPath
-    $env:DICTATE_APPID = "Dictate"
-    $env:KMP_DUPLICATE_LIB_OK = "TRUE"
+$env:DICTATE_SHORTCUT = $shortcutPath
+$env:DICTATE_APPID = $AppId
+$env:KMP_DUPLICATE_LIB_OK = "TRUE"
 
-    $pyLines = @(
-        "import os",
-        "from win32com.propsys import propsys",
-        "lnk = os.path.abspath(os.environ['DICTATE_SHORTCUT'])",
-        "appid = os.environ['DICTATE_APPID']",
-        "import time",
-        "time.sleep(0.2)",
-        "gps_readwrite = 2",
-        "ps = propsys.SHGetPropertyStoreFromParsingName(lnk, None, gps_readwrite, propsys.IID_IPropertyStore)",
-        "key = propsys.PSGetPropertyKeyFromName('System.AppUserModel.ID')",
-        "ps.SetValue(key, propsys.PROPVARIANTType(appid))",
-        "ps.Commit()",
-        "print('AppUserModelID set to:', appid)"
-    )
-    $py = $pyLines -join "`n"
-    $py | & $pythonExe -
-} else {
-    Write-Host "Note: python.exe not found in conda env. AppUserModelID not set (run install.ps1 first)."
-}
+$pyLines = @(
+    "import os",
+    "from win32com.propsys import propsys",
+    "lnk = os.path.abspath(os.environ['DICTATE_SHORTCUT'])",
+    "appid = os.environ['DICTATE_APPID']",
+    "import time",
+    "time.sleep(0.2)",
+    "gps_readwrite = 2",
+    "ps = propsys.SHGetPropertyStoreFromParsingName(lnk, None, gps_readwrite, propsys.IID_IPropertyStore)",
+    "key = propsys.PSGetPropertyKeyFromName('System.AppUserModel.ID')",
+    "ps.SetValue(key, propsys.PROPVARIANTType(appid))",
+    "ps.Commit()",
+    "print('AppUserModelID set to:', appid)"
+)
+$py = $pyLines -join "`n"
+$py | & $pythonExe -

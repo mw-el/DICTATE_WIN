@@ -14,8 +14,10 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 
+from portable_paths import path as app_path
+
 # Load paste rules from configuration file
-PASTE_RULES_PATH = Path(__file__).parent / "paste_rules.json"
+PASTE_RULES_PATH = Path(app_path("paste_rules.json"))
 _paste_rules_cache = None
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)

@@ -1,0 +1,12 @@
+Dictate Portable - Nutzung auf anderem Windows-PC
+
+1) Entpacke die App-ZIP in einen Ordner deiner Wahl.
+2) Starte Dictate.exe.
+3) Beim ersten Start laedt die App die Modelle automatisch herunter
+   (Hinweisfenster erscheint).
+
+Optional (Offline/Fehler beim Download):
+1) Entpacke die Models-ZIP.
+2) Kopiere den Ordner "models" in den App-Ordner:
+   <APP-ORDNER>\models\
+3) Starte Dictate.exe erneut - die App verwendet die lokalen Modelle.

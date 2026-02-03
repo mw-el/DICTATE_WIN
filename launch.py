@@ -7,6 +7,9 @@ Sets required environment variables, then runs dictate.py.
 import os
 import sys
 import runpy
+import argparse
+
+from portable_paths import app_dir
 
 
 def _set_env():
@@ -27,11 +30,28 @@ def _set_env():
     os.environ["PYTHONIOENCODING"] = "utf-8"
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--appid", default="Dictate")
+    args, _unknown = parser.parse_known_args(argv)
+
     _set_env()
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
-    runpy.run_path(os.path.join(script_dir, "dictate.py"), run_name="__main__")
+    os.environ["DICTATE_APPID"] = args.appid
+    base_dir = app_dir()
+    os.chdir(base_dir)
+    if os.environ.get("DICTATE_DRYRUN") == "1":
+        if getattr(sys, "frozen", False):
+            print("DRYRUN: would run module 'dictate'")
+        else:
+            print(f"DRYRUN: would run path {os.path.join(base_dir, 'dictate.py')}")
+        return
+    script_path = os.path.join(base_dir, "dictate.py")
+    if not os.path.exists(script_path) and getattr(sys, "frozen", False):
+        script_path = os.path.join(base_dir, "_internal", "dictate.py")
+    script_dir = os.path.dirname(script_path)
+    if script_dir and script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    runpy.run_path(script_path, run_name="__main__")
 
 
 if __name__ == "__main__":
